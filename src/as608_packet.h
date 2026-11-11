@@ -29,8 +29,11 @@
 extern "C" {
 #endif
 
-/** @brief Two-byte AS60x start code (wire order: EF 01). */
-#define AS608_PACKET_START_CODE UINT16_C(0xEF01)
+/** @brief First wire byte of the AS60x start sequence. */
+#define AS608_PACKET_START_BYTE_0 UINT8_C(0xEF)
+
+/** @brief Second wire byte of the AS60x start sequence. */
+#define AS608_PACKET_START_BYTE_1 UINT8_C(0x01)
 
 /** @brief Bytes preceding the payload, including the two Length bytes. */
 #define AS608_PACKET_HEADER_BYTES ((size_t)9U)
