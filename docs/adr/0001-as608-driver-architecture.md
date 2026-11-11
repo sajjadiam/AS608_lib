@@ -2,7 +2,8 @@
 
 - **Status:** Proposed — baseline design awaiting public-header review
 - **Date:** 2026-11-11
-- **Target:** AS608 / ATK-AS608 UART packet protocol
+- **Confirmed hardware target:** Synochip AS608_QCCF (QFN32), based on user's direct observation of the IC marking and pin count on a previously purchased module. This is hardware identification, not firmware identification.
+- **Protocol family:** AS60x UART packet protocol (module-firmware compatibility to be validated).
 
 ## Context and verified protocol facts
 
@@ -12,6 +13,15 @@ References:
 - ATK-AS608 module user manual V1.00 (2016-05-12), sections 2.2–2.4: https://it.scribd.com/document/773294313/AS608-Fingerprint-Sensor-User-Manual
 - AS60x fingerprint SOC user manual (source-hosted PDF): https://github.com/siyouluo/FingerprintLock/blob/V2.0/datasheet/AS608datasheet/AS60x%E6%8C%87%E7%BA%B9%E8%AF%86%E5%88%ABSOC%E7%94%A8%E6%88%B7%E6%89%8B%E5%86%8CV10.pdf
 - Reference implementation for command coverage (not normative): https://github.com/adafruit/Adafruit-Fingerprint-Sensor-Library
+
+## Hardware baseline and compatibility limits
+
+- 2026-11-11: User inspected a physical AS608 module and confirmed the IC marking `AS608_QCCF` with 32 pins. Treat QCCF as the verified chip variant of the reference sample; do not infer the chip variant of every third-party AS608 board.
+- Synochip's AS608 Processor Datasheet v1.00 (2015-09), Table 2-1: `AS608_QCCF` is QFN32; `AS608_QYCF` is QFN60. Both list 512 KB flash and 128 KB SRAM, but their peripheral availability differs.
+- The chip package does **not** identify the connected fingerprint image sensor, installed firmware, or fingerprint-template algorithm/version. `PS_ReadSysPara` reports a `SensorType` code in the AS60x communication manual; it is **not** an AS608_QCCF/QYCF package identifier. Product/software descriptors may be available via `PS_ReadINFpage` on supported firmware.
+- The AS60x manual describes 256-byte feature files and 512-byte templates, and defines `PS_LoadChar`, `PS_UpChar`, `PS_DownChar` and `PS_StoreChar`. This specifies a transfer mechanism, **not** proof of cross-firmware or cross-sensor template compatibility. Do not hardcode cross-device sync as guaranteed. Opaque template transfer and matching tests on both physical modules must establish interoperability before enabling sync.
+- Image transfer is not a default replacement for an incompatible template: the manual specifies 4-bit-per-pixel image transfer over UART, and it provides no guarantee of cross-firmware/sensor reconstruction or recognition.
+- Correct the earlier assumption that all AS608-like modules have identical UART framing: the older AS60x manual states default 57600 baud, 8 data bits, **2 stop bits**, no parity; module-specific electrical and UART settings must be independently confirmed. This driver's transport interface must not enforce 8N1.
 
 ## Decisions
 
@@ -44,7 +54,7 @@ References:
 
 ## Open questions before accepting this ADR
 
-- Confirm exact AS608 board variant, electrical supply and UART voltage levels from its own datasheet.
+- Confirm the actual *module* revision, IO voltage, power requirements and UART line settings from its own documentation or measurement; the reference IC is identified as AS608_QCCF.
 - Agree on callback return-value conventions, total timeout API and whether all public structs remain caller-owned.
 - Define behavior after incomplete response (port flush/resync strategy) and initial maximum ACK size.
-- Agree on the first milestone: the small blocking command set above, not image/template streaming.
+- Agree on the first milestone: the small blocking command set above, not image/template streaming. Template sync is a possible next milestone contingent on an interoperability test and an explicit streaming API design.
