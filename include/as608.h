@@ -301,12 +301,7 @@ as608_result_t as608_store_template(as608_t *dev, as608_char_buffer_t buffer, ui
  * @note PageID is a database location, not a value to extract from the
  *       transferred template bytes.
  */
-as608_result_t as608_read_template(
-    as608_t *dev,
-    uint16_t page_id,
-    uint8_t *data,
-    size_t capacity
-);
+as608_result_t as608_read_template(as608_t *dev, uint16_t page_id, uint8_t *data, size_t capacity);
 
 /**
  * @brief Import and store a template in a specified database slot.
@@ -333,12 +328,7 @@ as608_result_t as608_read_template(
  * @note No slot allocation, cross-device synchronization or rollback
  *       is performed by this function.
  */
-as608_result_t as608_write_template(
-    as608_t *dev,
-    uint16_t page_id,
-    const uint8_t *data,
-    size_t length
-);
+as608_result_t as608_write_template(as608_t *dev, uint16_t page_id, const uint8_t *data, size_t length);
 
 /**
  * @brief Delete consecutive templates (PS_DeletChar, 0x0C).
