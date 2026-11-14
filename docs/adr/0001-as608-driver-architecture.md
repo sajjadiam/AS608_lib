@@ -45,7 +45,7 @@ References:
 
 ## Device-level link recovery contract (2026-11-14)
 
-- **Quarantine, fail closed.** Any host I/O, timeout, malformed-frame, unexpected packet or checksum failure detected in the blocking Transaction Layer marks `as608_t.link_unsynchronized` and stores the original error in the per-transaction context. Subsequently, `as608_transaction_begin()` refuses new work with `AS608_STATUS_RECOVERY_REQUIRED`, without consuming stale UART bytes. Host argument-validation errors (no I/O attempted) do not quarantine the link.
+- **Quarantine, fail closed.** Any host I/O, timeout, malformed-frame, unexpected packet or checksum failure detected in the blocking Transaction Layer transitions `as608_t.state` to `AS608_STATE_DESYNCHRONIZED` and stores the original error in the per-transaction context. Subsequently, `as608_transaction_begin()` refuses new work with `AS608_STATUS_RECOVERY_REQUIRED`, without consuming stale UART bytes. Host argument-validation errors (no I/O attempted) do not quarantine the link.
 - **Explicit platform recovery.** `as608_recover(dev)` invokes the optional `as608_port_t.recover(user, timeout_ms)`. To report success, the platform callback MUST abort outstanding host TX/DMA, guarantee that previously started sensor operations can no longer emit a response (typically real sensor reset/power cycle), wait for boot, and remove all stale host UART FIFO/DMA/software-RX data. Clearing the current RX buffer alone does not guarantee recovery.
 - **No unsafe fallback.** Missing recovery callback, failed reset or exhausted recovery timeout leaves the device quarantined. The driver does not automatically retry an ambiguous operation, clear the flag on arbitrary status, or use a generic unverified UART flush as proof of synchronization.
 - **Startup precondition.** A fresh `as608_init()` (not yet implemented) assumes a known-clean sensor communication epoch established by the host. Recalling init on an already-uncertain physical link is not a recovery procedure. An implementation should reject or explicitly document reinitialization of an active context.
@@ -53,6 +53,13 @@ References:
 - **Storage consistency and command sequencing.** Physical recovery does not undo a previously started `StoreChar`, `DeleteChar`, or `Empty` operation. After an ambiguous acknowledgment, reconcile the affected PageIDs / index table and central sync registry. Because AS60x has no sequence ID, a command-layer error detected after receipt of an intact frame must also quarantine the device if more packets may still arrive or a reply is ambiguous; this is pending command-layer integration.
 - **Timeout contract.** Recovery uses the device's configured transaction timeout. The core measures elapsed ticks modulo 2^32 and rejects callbacks returning at or beyond the deadline; ports are required to honor their blocking budget. Failed recovery remains quarantined.
 - **Validation.** Host mock tests cover split transfers, stale ACK quarantining, missing/failing/timed-out physical reset callbacks, invalid input, and 32-bit clock rollover. Real-board fault injection and physical reset verification remain outstanding.
+
+## Lifecycle state revision (2026-11-14)
+
+- Replaced the two boolean-like fields `initialized` and `link_unsynchronized` with one C11 enum `as608_state_t`: `AS608_STATE_UNINITIALIZED = 0`, `AS608_STATE_READY`, and `AS608_STATE_DESYNCHRONIZED`. The zero state supports explicitly zero-initialized caller-owned contexts; nonzero unexpected states fail closed.
+- Successful `as608_init` (command source not implemented yet) must transition UNINITIALIZED -> READY only after validating the configured callbacks and timeouts. A second init must not silently turn DESYNCHRONIZED into READY. `as608_recover` transitions READY/DESYNCHRONIZED to DESYNCHRONIZED before hardware callback and to READY only after verified successful recovery.
+- Transaction send/receive retain the original sticky transaction error; new transactions reject DESYNCHRONIZED with `AS608_STATUS_RECOVERY_REQUIRED`. The public state field is driver-owned and not an application-level override.
+- The enum uses implementation-defined storage size under C11; if memory size proves material, compare ABI and layout on target MCU rather than assuming either `_Bool` or `enum` is one byte.
 
 ## Public API implications
 
