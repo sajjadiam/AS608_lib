@@ -281,6 +281,66 @@ as608_result_t as608_download_template(as608_t *dev, as608_char_buffer_t buffer,
 as608_result_t as608_store_template(as608_t *dev, as608_char_buffer_t buffer, uint16_t page_id);
 
 /**
+ * @brief Read a database template into caller-owned memory.
+ * @details
+ * Convenience operation: PS_LoadChar (0x07), then PS_UpChar (0x08),
+ * using CharBuffer1. The two commands and all data packets share one
+ * overall transaction deadline.
+ *
+ * @param[in,out] dev Initialized device context.
+ * @param[in] page_id Database slot to read (not an intrinsic template ID).
+ * @param[out] data Destination for a complete, opaque template.
+ * @param[in] capacity Available destination bytes.
+ * @return Host status and device confirmation of the failing step,
+ *         or successful completion of both steps.
+ *
+ * @pre capacity >= AS608_TEMPLATE_BYTES.
+ * @note On success the first AS608_TEMPLATE_BYTES bytes contain the template.
+ * @warning CharBuffer1 is overwritten. On failure data may be partially
+ *          modified; discard it unless both result fields indicate success.
+ * @note PageID is a database location, not a value to extract from the
+ *       transferred template bytes.
+ */
+as608_result_t as608_read_template(
+    as608_t *dev,
+    uint16_t page_id,
+    uint8_t *data,
+    size_t capacity
+);
+
+/**
+ * @brief Import and store a template in a specified database slot.
+ * @details
+ * Convenience operation: PS_DownChar (0x09), then PS_StoreChar (0x06),
+ * using CharBuffer1. All packets and both commands share one overall
+ * transaction deadline. The caller explicitly chooses the same page_id
+ * on each device when synchronizing database-slot assignments.
+ *
+ * @param[in,out] dev Initialized device context.
+ * @param[in] page_id Destination database slot.
+ * @param[in] data Complete, opaque template from a compatible module.
+ * @param[in] length Template size; must equal AS608_TEMPLATE_BYTES.
+ * @return Host status and device confirmation of the failing step,
+ *         or successful completion of both steps.
+ *
+ * @pre data != NULL and length == AS608_TEMPLATE_BYTES.
+ * @warning CharBuffer1 is overwritten; an occupied page_id may be replaced.
+ * @warning This operation is not atomic: a failure after DownChar may leave
+ *          the buffer changed, while StoreChar may fail or complete
+ *          ambiguously after a transport timeout.
+ * @note Transfer and store success do not prove that the template is
+ *       compatible with the destination firmware's matching algorithm.
+ * @note No slot allocation, cross-device synchronization or rollback
+ *       is performed by this function.
+ */
+as608_result_t as608_write_template(
+    as608_t *dev,
+    uint16_t page_id,
+    const uint8_t *data,
+    size_t length
+);
+
+/**
  * @brief Delete consecutive templates (PS_DeletChar, 0x0C).
  * @param[in,out] dev Initialized device.
  * @param[in] start_page First position to erase.
