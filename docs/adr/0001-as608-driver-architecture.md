@@ -61,6 +61,16 @@ References:
 - Transaction send/receive retain the original sticky transaction error; new transactions reject DESYNCHRONIZED with `AS608_STATUS_RECOVERY_REQUIRED`. The public state field is driver-owned and not an application-level override.
 - The enum uses implementation-defined storage size under C11; if memory size proves material, compare ABI and layout on target MCU rather than assuming either `_Bool` or `enum` is one byte.
 
+## Template streaming length contract (2026-11-14)
+
+- The AS60x Communication Manual v1.0, p. 6 documents a **512-byte** template. Hardware validation with two AS608_QCCF modules using packet-size code 2 (128-byte data chunks) observed **six 128-byte fragments = 768 bytes**, with the sixth carrying END_DATA. That captured template was downloaded, stored and successfully searched on the second module. This demonstrates interoperability for the tested pair, **not** all AS608 firmware.
+- `AS608_TEMPLATE_512_BYTES` and `AS608_TEMPLATE_768_BYTES` are accepted sizes. `AS608_TEMPLATE_MAX_BYTES` is the recommended allocation size; the legacy `AS608_TEMPLATE_BYTES` is now an allocation alias (768), **not** a promise of exact length.
+- `as608_template_buffer_t` holds caller-owned `data`, `capacity`, and an output `length`. `as608_read_template()` and `as608_upload_template()` now take this descriptor. A successful transfer sets `length` only after a checksum-verified END_DATA and a validated template length of 512 or 768 bytes. The output `length` remains unchanged on any failed transfer; payload storage may be partially modified.
+- A bounded receive never writes beyond `capacity`. An END_DATA at any unsupported length, or a capacity limit before END_DATA, fails and quarantines the link rather than silently accepting/truncating data. All stream packets share the original transaction deadline. The information-page read remains strictly 512 bytes.
+- `as608_write_template()` and `as608_download_template()` accept 512 or 768 bytes and packetize the **actual supplied length**, using the destination module's reported packet-size code. The caller must pass `source_buffer.length` to writing, **never** its storage `capacity`.
+- **API migration:** Earlier 4-argument `as608_read_template(dev, page, data, capacity)` and `as608_upload_template(dev, buffer, data, capacity)` must be changed to 3-argument calls taking an `as608_template_buffer_t *`. Existing application code must be updated and rebuilt. Old explicit 512-byte-allocation assumptions are no longer safe on the tested firmware.
+- **Limitations:** This does not auto-detect firmware compatibility, infer a PageID from bytes, or verify the destination can match transferred models. Hardware validation remains required for new module variants.
+
 ## Public API implications
 
 - A caller-owned as608_t and a compact as608_config_t with a transport callback table, 32-bit device address and transaction timeout.
