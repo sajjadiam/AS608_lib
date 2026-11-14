@@ -183,32 +183,69 @@ static as608_result_t parameters_command(as608_transaction_t *txn, as608_paramet
 
 /* One receive deadline covers ACK plus all DATA/END_DATA packets. The
  * destination may be partially changed on failure and must then be ignored. */
-static as608_result_t receive_blob(as608_transaction_t *txn, uint8_t *destination, size_t total) {
-    if ((destination == NULL) || (total == 0U)) {
+/* Receives a bounded stream until END_DATA. The checksum is checked per
+ * fragment by the transaction layer. A full buffer is not end-of-stream.
+ * Actual size is exposed only when a complete valid stream has arrived. */
+static as608_result_t receive_blob(as608_transaction_t *txn, uint8_t *destination,
+                                   size_t capacity, size_t *received)
+{
+    if ((destination == NULL) || (received == NULL) || (capacity == 0U)) {
         return host_result(AS608_STATUS_INVALID_ARG);
     }
+
     size_t offset = 0U;
-    while (offset < total) {
+    for (;;) {
+        if (offset == capacity) {
+            /* An exact-sized DATA fragment still requires END_DATA.
+             * No more data can be accepted safely: fail closed. */
+            return bad_reply(txn);
+        }
+
+        const size_t remaining = capacity - offset;
         as608_transaction_rx_t rx = {
             destination + offset,
-            (total - offset < AS608_MAX_DATA_CHUNK) ? total - offset : AS608_MAX_DATA_CHUNK,
-            0U, 
+            (remaining < AS608_MAX_DATA_CHUNK) ? remaining : AS608_MAX_DATA_CHUNK,
+            0U,
             AS608_PACKET_DATA
         };
+
         const as608_status_t status = as608_transaction_receive(txn, &rx);
         if (status != AS608_STATUS_OK) return host_result(status);
-        if ((rx.length == 0U) || ((rx.kind != AS608_PACKET_DATA) && (rx.kind != AS608_PACKET_END_DATA))) return bad_reply(txn);
+        if ((rx.length == 0U) ||
+            ((rx.kind != AS608_PACKET_DATA) &&
+             (rx.kind != AS608_PACKET_END_DATA))) {
+            return bad_reply(txn);
+        }
+
         offset += rx.length;
-        if (rx.kind == AS608_PACKET_END_DATA) return (offset == total) ? sensor_result(AS608_ACK_OK) : bad_reply(txn);
-        if (offset == total) return bad_reply(txn);
+        if (rx.kind == AS608_PACKET_END_DATA) {
+            *received = offset;
+            return sensor_result(AS608_ACK_OK);
+        }
     }
-    return bad_reply(txn);
 }
 
-static as608_result_t upload_command(as608_transaction_t *txn, as608_char_buffer_t buffer, uint8_t *data, size_t length) {
+static bool valid_template_size(size_t length)
+{
+    return (length == AS608_TEMPLATE_512_BYTES) ||
+           (length == AS608_TEMPLATE_768_BYTES);
+}
+
+static as608_result_t upload_command(as608_transaction_t *txn,
+                                      as608_char_buffer_t buffer,
+                                      as608_template_buffer_t *output)
+{
     const as608_result_t ack = buffer_command(txn, CMD_UP_CHAR, buffer);
     if (!succeeded(ack)) return ack;
-    return receive_blob(txn, data, length);
+
+    size_t received = 0U;
+    const as608_result_t result = receive_blob(txn, output->data,
+                                                 output->capacity, &received);
+    if (!succeeded(result)) return result;
+    if (!valid_template_size(received)) return bad_reply(txn);
+
+    output->length = received;
+    return result;
 }
 
 /* Send DATA followed by precisely one END_DATA fragment. The chunk size is
@@ -319,7 +356,12 @@ as608_result_t as608_read_information_page(as608_t *dev, uint8_t *data, size_t c
     as608_transaction_rx_t reply = {ack, sizeof(ack), 0U, AS608_PACKET_ACK};
     const as608_result_t result = command_ack(&txn, &view, &reply);
     if (!succeeded(result)) return result;
-    return receive_blob(&txn, data, AS608_INFORMATION_PAGE_BYTES);
+    size_t received = 0U;
+    const as608_result_t stream = receive_blob(
+        &txn, data, AS608_INFORMATION_PAGE_BYTES, &received);
+    if (!succeeded(stream)) return stream;
+    return (received == AS608_INFORMATION_PAGE_BYTES) ?
+           stream : bad_reply(&txn);
 }
 
 as608_result_t as608_capture_image(as608_t *dev) {
@@ -388,18 +430,19 @@ as608_result_t as608_load_template(as608_t *dev, as608_char_buffer_t buffer, uin
     return page_command(&txn, CMD_LOAD_CHAR, buffer, page_id);
 }
 
-as608_result_t as608_upload_template(as608_t *dev, as608_char_buffer_t buffer, uint8_t *data, size_t capacity) {
-    if (!valid_buffer(buffer) || !data || (capacity < AS608_TEMPLATE_BYTES)) {
+as608_result_t as608_upload_template(as608_t *dev, as608_char_buffer_t buffer, as608_template_buffer_t *output) {
+    if (!valid_buffer(buffer) || !output || !output->data ||
+        (output->capacity < AS608_TEMPLATE_512_BYTES)) {
         return host_result(AS608_STATUS_INVALID_ARG);
     }
     as608_transaction_t txn;
     const as608_result_t begun = begin_command(dev, &txn);
     if (begun.status != AS608_STATUS_OK) return begun;
-    return upload_command(&txn, buffer, data, AS608_TEMPLATE_BYTES);
+    return upload_command(&txn, buffer, output);
 }
 
 as608_result_t as608_download_template(as608_t *dev, as608_char_buffer_t buffer, const uint8_t *data, size_t length) {
-    if (!valid_buffer(buffer) || !data || (length != AS608_TEMPLATE_BYTES)) return host_result(AS608_STATUS_INVALID_ARG);
+    if (!valid_buffer(buffer) || !data || !valid_template_size(length)) return host_result(AS608_STATUS_INVALID_ARG);
     as608_transaction_t txn;
     const as608_result_t begun = begin_command(dev, &txn);
     if (begun.status != AS608_STATUS_OK) return begun;
@@ -414,18 +457,20 @@ as608_result_t as608_store_template(as608_t *dev, as608_char_buffer_t buffer, ui
     return page_command(&txn, CMD_STORE_CHAR, buffer, page_id);
 }
 
-as608_result_t as608_read_template(as608_t *dev, uint16_t page_id, uint8_t *data, size_t capacity) {
-    if (!data || (capacity < AS608_TEMPLATE_BYTES)) return host_result(AS608_STATUS_INVALID_ARG);
+as608_result_t as608_read_template(as608_t *dev, uint16_t page_id, as608_template_buffer_t *output) {
+    if (!output || !output->data || (output->capacity < AS608_TEMPLATE_512_BYTES)) {
+        return host_result(AS608_STATUS_INVALID_ARG);
+    }
     as608_transaction_t txn;
     const as608_result_t begun = begin_command(dev, &txn);
     if (begun.status != AS608_STATUS_OK) return begun;
     const as608_result_t loaded = page_command(&txn, CMD_LOAD_CHAR, AS608_CHAR_BUFFER_1, page_id);
     if (!succeeded(loaded)) return loaded;
-    return upload_command(&txn, AS608_CHAR_BUFFER_1, data, AS608_TEMPLATE_BYTES);
+    return upload_command(&txn, AS608_CHAR_BUFFER_1, output);
 }
 
 as608_result_t as608_write_template(as608_t *dev, uint16_t page_id, const uint8_t *data, size_t length) {
-    if (!data || (length != AS608_TEMPLATE_BYTES)) return host_result(AS608_STATUS_INVALID_ARG);
+    if (!data || !valid_template_size(length)) return host_result(AS608_STATUS_INVALID_ARG);
     as608_transaction_t txn;
     const as608_result_t begun = begin_command(dev, &txn);
     if (begun.status != AS608_STATUS_OK) return begun;
