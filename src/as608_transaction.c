@@ -24,8 +24,7 @@ static bool as608_rx_kind_is_valid(uint8_t kind) {
 }
 
 static bool as608_transaction_is_active(const as608_transaction_t *txn) {
-    return (txn != NULL) && (txn->dev != NULL) &&
-           (txn->dev->state != AS608_STATE_UNINITIALIZED);
+    return (txn) && (txn->dev) && (txn->dev->state != AS608_STATE_UNINITIALIZED);
 }
 
 static as608_status_t as608_remaining_ms(const as608_transaction_t *txn, uint32_t *remaining) {
@@ -85,7 +84,7 @@ static as608_status_t as608_transaction_fail(as608_transaction_t *txn, as608_sta
 }
 
 as608_status_t as608_transaction_begin(as608_transaction_t *txn, as608_t *dev) {
-    if ((txn == NULL) || (dev == NULL)) return AS608_STATUS_INVALID_ARG;
+    if (!txn || !dev) return AS608_STATUS_INVALID_ARG;
     if (dev->state == AS608_STATE_UNINITIALIZED) return AS608_STATUS_NOT_INITIALIZED;
     if (dev->state != AS608_STATE_READY) return AS608_STATUS_RECOVERY_REQUIRED;
     const as608_config_t *config = &dev->config;
@@ -112,8 +111,8 @@ static as608_status_t as608_send_payload(
     as608_transaction_t *txn,
     const as608_packet_header_t *header,
     const uint8_t *payload,
-    size_t size)
-{
+    size_t size
+) {
     uint16_t sum = as608_packet_checksum_begin(header);
     sum = as608_packet_checksum_update(sum, payload, size);
 
@@ -131,8 +130,8 @@ static as608_status_t as608_send_payload(
 static as608_status_t as608_receive_header(
     as608_transaction_t *txn,
     size_t capacity,
-    as608_packet_header_t *header)
-{
+    as608_packet_header_t *header
+) {
     uint8_t wire[AS608_PACKET_HEADER_BYTES];
     as608_status_t status = as608_read_exact(txn, wire, sizeof(wire));
     if (status != AS608_STATUS_OK) return status;
@@ -152,8 +151,8 @@ static as608_status_t as608_receive_header(
 static as608_status_t as608_receive_payload(
     as608_transaction_t *txn,
     const as608_packet_header_t *header,
-    uint8_t *data)
-{
+    uint8_t *data
+) {
     uint16_t sum = as608_packet_checksum_begin(header);
     if (header->payload_size != 0U) {
         const as608_status_t status = as608_read_exact(txn, data, (size_t)header->payload_size);
@@ -172,13 +171,13 @@ as608_status_t as608_transaction_send(
     as608_transaction_t *txn,
     as608_packet_kind_t kind,
     const uint8_t *payload,
-    size_t size)
-{
+    size_t size
+) {
     if (!as608_transaction_is_active(txn)) return AS608_STATUS_NOT_INITIALIZED;
     if (txn->fault != AS608_STATUS_OK) return txn->fault;
     if (txn->dev->state != AS608_STATE_READY) return AS608_STATUS_RECOVERY_REQUIRED;
     if (!as608_tx_kind_is_valid(kind) || (size > AS608_PACKET_WIRE_PAYLOAD_MAX) ||
-        ((payload == NULL) && (size != 0U)) || ((kind == AS608_PACKET_COMMAND) && (size == 0U)))
+        (!payload && (size != 0U)) || ((kind == AS608_PACKET_COMMAND) && (size == 0U)))
     {
         return AS608_STATUS_INVALID_ARG;
     }
@@ -194,10 +193,7 @@ as608_status_t as608_transaction_send(
     return as608_transaction_fail(txn, status);
 }
 
-as608_status_t as608_transaction_receive(
-    as608_transaction_t *txn,
-    as608_transaction_rx_t *frame)
-{
+as608_status_t as608_transaction_receive(as608_transaction_t *txn, as608_transaction_rx_t *frame) {
     if (!as608_transaction_is_active(txn)) return AS608_STATUS_NOT_INITIALIZED;
     if (txn->fault != AS608_STATUS_OK) return txn->fault;
     if (txn->dev->state != AS608_STATE_READY) return AS608_STATUS_RECOVERY_REQUIRED;
@@ -218,40 +214,27 @@ as608_status_t as608_transaction_receive(
  * @details Reset must cancel prior sensor replies and clear all RX queues.
  * A failed or absent callback never clears the device quarantine.
  */
-as608_status_t as608_recover(as608_t *dev)
-{
-    if (dev == NULL) {
-        return AS608_STATUS_INVALID_ARG;
-    }
-    if (dev->state == AS608_STATE_UNINITIALIZED) {
-        return AS608_STATUS_NOT_INITIALIZED;
-    }
-    if ((dev->state != AS608_STATE_READY) &&
-        (dev->state != AS608_STATE_DESYNCHRONIZED)) {
+as608_status_t as608_recover(as608_t *dev) {
+    if (!dev) return AS608_STATUS_INVALID_ARG;
+    if (dev->state == AS608_STATE_UNINITIALIZED) return AS608_STATUS_NOT_INITIALIZED;
+    if ((dev->state != AS608_STATE_READY) && (dev->state != AS608_STATE_DESYNCHRONIZED)) {
         return AS608_STATUS_RECOVERY_REQUIRED;
     }
     const as608_config_t *config = &dev->config;
-    if (config->port.recover == NULL) {
-        return AS608_STATUS_RECOVERY_REQUIRED;
-    }
-    if ((config->port.clock_ms == NULL) ||
-        (config->timeout_ms == 0U) ||
-        (config->timeout_ms > AS608_MAX_TIMEOUT_MS)) {
+    if (!config->port.recover) return AS608_STATUS_RECOVERY_REQUIRED;
+    if (!config->port.clock_ms || (config->timeout_ms == 0U) ||
+        (config->timeout_ms > AS608_MAX_TIMEOUT_MS)) 
+    {
         return AS608_STATUS_INVALID_ARG;
     }
 
     /* A failed reset can also disrupt a previously valid communication. */
     dev->state = AS608_STATE_DESYNCHRONIZED;
     const uint32_t start = config->port.clock_ms(config->port.user);
-    const int32_t result = config->port.recover(config->port.user,
-                                                config->timeout_ms);
+    const int32_t result = config->port.recover(config->port.user, config->timeout_ms);
     const uint32_t elapsed = config->port.clock_ms(config->port.user) - start;
-    if (elapsed >= config->timeout_ms) {
-        return AS608_STATUS_TIMEOUT;
-    }
-    if (result != 0) {
-        return AS608_STATUS_IO_ERROR;
-    }
+    if (elapsed >= config->timeout_ms) return AS608_STATUS_TIMEOUT;
+    if (result != 0) return AS608_STATUS_IO_ERROR;
     dev->state = AS608_STATE_READY;
     return AS608_STATUS_OK;
 }
