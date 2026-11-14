@@ -41,7 +41,8 @@ typedef enum {
     AS608_STATUS_TIMEOUT,         /**< Overall transaction deadline expired. */
     AS608_STATUS_FRAME_ERROR,     /**< Invalid frame header, address or length. */
     AS608_STATUS_CHECKSUM_ERROR,  /**< Received frame checksum is invalid. */
-    AS608_STATUS_UNEXPECTED_REPLY /**< Unexpected packet kind or payload size. */
+    AS608_STATUS_UNEXPECTED_REPLY, /**< Unexpected packet kind or payload size. */
+    AS608_STATUS_RECOVERY_REQUIRED /**< An earlier transaction left the link uncertain. */
 } as608_status_t;
 
 /**
@@ -149,10 +150,13 @@ typedef struct {
 /**
  * @brief Caller-owned device context; no dynamic allocation.
  * @warning Do not concurrently operate on, modify, or copy an active context.
+ * @warning The first initialization assumes a known-clean sensor startup;
+ *          invoking as608_init again is not a link-recovery mechanism.
  */
 typedef struct {
     as608_config_t config; /**< Copy of initialization configuration. */
     uint8_t initialized;   /**< Internal initialization flag; do not modify. */
+    uint8_t link_unsynchronized; /**< Driver-owned quarantine flag. */
 } as608_t;
 
 /**
@@ -162,6 +166,22 @@ typedef struct {
  * @return Host-side status; no device confirmation code.
  */
 as608_status_t as608_init(as608_t *dev, const as608_config_t *config);
+
+/**
+ * @brief Reestablish a trustworthy sensor/UART communication epoch.
+ * @details Invoke the optional as608_port_t.recover callback to reset the
+ * physical sensor, wait for boot, abort pending TX and clear the complete
+ * UART RX pipeline. This is not a protocol command or an automatic retry.
+ * @param[in,out] dev Initialized device context.
+ * @retval AS608_STATUS_OK The port confirmed a fresh link epoch.
+ * @retval AS608_STATUS_RECOVERY_REQUIRED No recovery callback is available.
+ * @retval AS608_STATUS_IO_ERROR The recovery callback failed.
+ * @retval AS608_STATUS_TIMEOUT Recovery exceeded the timeout budget.
+ * @note Reinitializing the context without a physical reset is not recovery.
+ * @warning A timed-out flash update can have an uncertain commit outcome;
+ *          reconcile affected PageIDs before retrying destructive commands.
+ */
+as608_status_t as608_recover(as608_t *dev);
 
 /**
  * @brief Verify access password using PS_VfyPwd (0x13).
