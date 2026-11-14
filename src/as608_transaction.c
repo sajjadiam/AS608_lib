@@ -76,13 +76,17 @@ static as608_status_t as608_read_exact(as608_transaction_t *txn, uint8_t *data, 
 }
 
 static as608_status_t as608_transaction_fail(as608_transaction_t *txn, as608_status_t status) {
-    if (status != AS608_STATUS_OK) txn->fault = status;
+    if (status != AS608_STATUS_OK) {
+        txn->fault = status;
+        txn->dev->link_unsynchronized = 1U;
+    }
     return status;
 }
 
 as608_status_t as608_transaction_begin(as608_transaction_t *txn, as608_t *dev) {
-    if (!txn || !dev == NULL) return AS608_STATUS_INVALID_ARG
+    if ((txn == NULL) || (dev == NULL)) return AS608_STATUS_INVALID_ARG;
     if (dev->initialized == 0U) return AS608_STATUS_NOT_INITIALIZED;
+    if (dev->link_unsynchronized != 0U) return AS608_STATUS_RECOVERY_REQUIRED;
     const as608_config_t *config = &dev->config;
     if (!config->port.write || !config->port.read || !config->port.clock_ms ||
         (config->timeout_ms == 0U) || (config->timeout_ms > AS608_MAX_TIMEOUT_MS)) {
@@ -171,6 +175,7 @@ as608_status_t as608_transaction_send(
 {
     if (!as608_transaction_is_active(txn)) return AS608_STATUS_NOT_INITIALIZED;
     if (txn->fault != AS608_STATUS_OK) return txn->fault;
+    if (txn->dev->link_unsynchronized != 0U) return AS608_STATUS_RECOVERY_REQUIRED;
     if (!as608_tx_kind_is_valid(kind) || (size > AS608_PACKET_WIRE_PAYLOAD_MAX) ||
         ((payload == NULL) && (size != 0U)) || ((kind == AS608_PACKET_COMMAND) && (size == 0U)))
     {
@@ -194,6 +199,7 @@ as608_status_t as608_transaction_receive(
 {
     if (!as608_transaction_is_active(txn)) return AS608_STATUS_NOT_INITIALIZED;
     if (txn->fault != AS608_STATUS_OK) return txn->fault;
+    if (txn->dev->link_unsynchronized != 0U) return AS608_STATUS_RECOVERY_REQUIRED;
     if (!frame || (!frame->data && (frame->capacity != 0U))) return AS608_STATUS_INVALID_ARG;
 
     as608_packet_header_t header;
@@ -203,5 +209,44 @@ as608_status_t as608_transaction_receive(
 
     frame->kind = (as608_packet_kind_t)header.kind;
     frame->length = (size_t)header.payload_size;
+    return AS608_STATUS_OK;
+}
+
+/**
+ * @brief Reestablish the physical sensor/UART epoch through the platform.
+ * @details Reset must cancel prior sensor replies and clear all RX queues.
+ * A failed or absent callback never clears the device quarantine.
+ */
+as608_status_t as608_recover(as608_t *dev)
+{
+    if (dev == NULL) {
+        return AS608_STATUS_INVALID_ARG;
+    }
+    if (dev->initialized == 0U) {
+        return AS608_STATUS_NOT_INITIALIZED;
+    }
+    const as608_config_t *config = &dev->config;
+    if (config->port.recover == NULL) {
+        return AS608_STATUS_RECOVERY_REQUIRED;
+    }
+    if ((config->port.clock_ms == NULL) ||
+        (config->timeout_ms == 0U) ||
+        (config->timeout_ms > AS608_MAX_TIMEOUT_MS)) {
+        return AS608_STATUS_INVALID_ARG;
+    }
+
+    /* A failed reset can also disrupt a previously valid communication. */
+    dev->link_unsynchronized = 1U;
+    const uint32_t start = config->port.clock_ms(config->port.user);
+    const int32_t result = config->port.recover(config->port.user,
+                                                config->timeout_ms);
+    const uint32_t elapsed = config->port.clock_ms(config->port.user) - start;
+    if (elapsed >= config->timeout_ms) {
+        return AS608_STATUS_TIMEOUT;
+    }
+    if (result != 0) {
+        return AS608_STATUS_IO_ERROR;
+    }
+    dev->link_unsynchronized = 0U;
     return AS608_STATUS_OK;
 }
