@@ -290,6 +290,49 @@ static void test_protocol_error_quarantines_device(void)
     assert(as608_capture_image(&dev).status == AS608_STATUS_RECOVERY_REQUIRED);
 }
 
+
+static void test_blob_timeout_and_index_capacity(void)
+{
+    mock_t m = {.split = 64U};
+    as608_t dev;
+    setup(&dev, &m);
+
+    uint8_t bitmap[32U];
+    (void)memset(bitmap, 0xA5, sizeof(bitmap));
+    const size_t old_tx = m.tx_len;
+    const size_t old_rx = m.rx_pos;
+    assert(as608_read_index_table(&dev, 0U, bitmap,
+                                  sizeof(bitmap) - 1U).status ==
+           AS608_STATUS_INVALID_ARG);
+    assert(m.tx_len == old_tx && m.rx_pos == old_rx);
+    assert(bitmap[0] == 0xA5U);
+    assert(dev.state == AS608_STATE_READY);
+
+    uint8_t index[32U];
+    for (size_t i = 0U; i < sizeof(index); ++i) {
+        index[i] = (uint8_t)(i + 0x20U);
+    }
+    ack(&m, AS608_ACK_OK, index, sizeof(index));
+    assert_success(as608_read_index_table(&dev, 0U, bitmap, sizeof(bitmap)));
+    assert(memcmp(bitmap, index, sizeof(index)) == 0);
+
+    /* ACK followed by partial DATA, then no more UART bytes. The fake clock
+     * advances on each read; a single deadline must eventually expire. */
+    ack(&m, AS608_ACK_OK, NULL, 0U);
+    const uint8_t segment[4] = {1U, 2U, 3U, 4U};
+    append_frame(&m, AS608_PACKET_DATA, segment, sizeof(segment));
+    dev.config.timeout_ms = 30U;
+    uint8_t output[AS608_TEMPLATE_BYTES] = {0};
+    const as608_result_t result = as608_upload_template(
+        &dev, AS608_CHAR_BUFFER_1, output, sizeof(output));
+    assert(result.status == AS608_STATUS_TIMEOUT);
+    assert(dev.state == AS608_STATE_DESYNCHRONIZED);
+    assert(output[0] == 1U && output[3] == 4U);
+    assert(as608_upload_template(&dev, AS608_CHAR_BUFFER_1,
+                                 output, sizeof(output)).status ==
+           AS608_STATUS_RECOVERY_REQUIRED);
+}
+
 int main(void)
 {
     test_init_and_basic_commands();
@@ -298,6 +341,7 @@ int main(void)
     test_bad_stream_quarantines();
     test_information_and_database_commands();
     test_protocol_error_quarantines_device();
+    test_blob_timeout_and_index_capacity();
     puts("as608 command tests: PASS");
     return 0;
 }
