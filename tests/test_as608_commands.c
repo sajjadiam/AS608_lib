@@ -186,8 +186,10 @@ static void test_multiframe_read_and_write(void)
         append_frame(&m, i == 3U ? AS608_PACKET_END_DATA : AS608_PACKET_DATA,
                      part, sizeof(part));
     }
-    uint8_t out[AS608_TEMPLATE_BYTES] = {0};
-    assert_success(as608_read_template(&dev, 25U, out, sizeof(out)));
+    uint8_t out[AS608_TEMPLATE_MAX_BYTES] = {0};
+    as608_template_buffer_t output = {out, sizeof(out), 99U};
+    assert_success(as608_read_template(&dev, 25U, &output));
+    assert(output.length == AS608_TEMPLATE_512_BYTES);
     assert(memcmp(out, expected, sizeof(expected)) == 0);
 
     const uint8_t params[16] = {
@@ -239,9 +241,11 @@ static void test_bad_stream_quarantines(void)
     ack(&m, AS608_ACK_OK, NULL, 0U);
     uint8_t short_part[8] = {0};
     append_frame(&m, AS608_PACKET_END_DATA, short_part, sizeof(short_part));
-    uint8_t out[AS608_TEMPLATE_BYTES];
+    uint8_t out[AS608_TEMPLATE_MAX_BYTES];
+    as608_template_buffer_t output = {out, sizeof(out), 33U};
     const as608_result_t r = as608_upload_template(
-        &dev, AS608_CHAR_BUFFER_1, out, sizeof(out));
+        &dev, AS608_CHAR_BUFFER_1, &output);
+    assert(output.length == 33U);
     assert(r.status == AS608_STATUS_UNEXPECTED_REPLY);
     assert(dev.state == AS608_STATE_DESYNCHRONIZED);
     assert(as608_capture_image(&dev).status == AS608_STATUS_RECOVERY_REQUIRED);
@@ -322,15 +326,135 @@ static void test_blob_timeout_and_index_capacity(void)
     const uint8_t segment[4] = {1U, 2U, 3U, 4U};
     append_frame(&m, AS608_PACKET_DATA, segment, sizeof(segment));
     dev.config.timeout_ms = 30U;
-    uint8_t output[AS608_TEMPLATE_BYTES] = {0};
+    uint8_t output[AS608_TEMPLATE_MAX_BYTES] = {0};
+    as608_template_buffer_t blob = {output, sizeof(output), 73U};
     const as608_result_t result = as608_upload_template(
-        &dev, AS608_CHAR_BUFFER_1, output, sizeof(output));
+        &dev, AS608_CHAR_BUFFER_1, &blob);
+    assert(blob.length == 73U);
     assert(result.status == AS608_STATUS_TIMEOUT);
     assert(dev.state == AS608_STATE_DESYNCHRONIZED);
     assert(output[0] == 1U && output[3] == 4U);
     assert(as608_upload_template(&dev, AS608_CHAR_BUFFER_1,
-                                 output, sizeof(output)).status ==
+                                 &blob).status ==
            AS608_STATUS_RECOVERY_REQUIRED);
+}
+
+
+static void test_template_768_upload_and_download(void)
+{
+    mock_t m = {.split = 13U};
+    as608_t dev;
+    setup(&dev, &m);
+
+    uint8_t expected[AS608_TEMPLATE_768_BYTES];
+    for (size_t i = 0U; i < sizeof(expected); ++i) {
+        expected[i] = (uint8_t)(i * 7U);
+    }
+
+    ack(&m, AS608_ACK_OK, NULL, 0U); /* LoadChar */
+    ack(&m, AS608_ACK_OK, NULL, 0U); /* UpChar */
+    for (size_t i = 0U; i < 6U; ++i) {
+        append_frame(&m, (i == 5U) ?
+            AS608_PACKET_END_DATA : AS608_PACKET_DATA,
+            expected + i * 128U, 128U);
+    }
+
+    uint8_t data[1024U];
+    (void)memset(data, 0xE5, sizeof(data));
+    as608_template_buffer_t output = {data, sizeof(data), 123U};
+    assert_success(as608_read_template(&dev, 1U, &output));
+    assert(output.length == AS608_TEMPLATE_768_BYTES);
+    assert(memcmp(data, expected, sizeof(expected)) == 0);
+    assert(data[768U] == 0xE5U && data[1023U] == 0xE5U);
+
+    const uint8_t params[16] = {
+        0U, 1U, 0U, 2U, 1U, 0x2CU, 0U, 3U,
+        0xFFU, 0xFFU, 0xFFU, 0xFFU, 0U, 2U, 0U, 6U
+    };
+    ack(&m, AS608_ACK_OK, params, sizeof(params)); /* ReadSysPara */
+    ack(&m, AS608_ACK_OK, NULL, 0U); /* DownChar */
+    ack(&m, AS608_ACK_OK, NULL, 0U); /* StoreChar */
+
+    const size_t tx_start = m.tx_len;
+    assert_success(as608_write_template(&dev, 1U, data, output.length));
+    size_t pos = tx_start;
+    size_t count = 0U;
+    size_t data_bytes = 0U;
+    while (pos < m.tx_len) {
+        const size_t payload_size = ((size_t)m.tx[pos + 7U] << 8U) |
+                                     (size_t)m.tx[pos + 8U];
+        assert(payload_size >= 2U);
+        const size_t kind = m.tx[pos + 6U];
+        if ((kind == AS608_PACKET_DATA) ||
+            (kind == AS608_PACKET_END_DATA)) {
+            assert(payload_size - 2U == 128U);
+            data_bytes += 128U;
+            assert((kind == AS608_PACKET_END_DATA) ==
+                   (data_bytes == sizeof(expected)));
+        }
+        pos += AS608_PACKET_HEADER_BYTES + payload_size;
+        ++count;
+    }
+    assert(pos == m.tx_len && count == 9U);
+    assert(data_bytes == sizeof(expected));
+}
+
+static void test_template_receive_limits_and_length_semantics(void)
+{
+    const uint8_t segment[128] = {0xA3U};
+
+    /* The available capacity is 512, but the sensor sends 768. Never
+     * overwrite past the user buffer or report a completed transfer. */
+    {
+        mock_t m = {.split = 32U};
+        as608_t dev;
+        setup(&dev, &m);
+        ack(&m, AS608_ACK_OK, NULL, 0U);
+        for (size_t i = 0U; i < 6U; ++i) {
+            append_frame(&m, (i == 5U) ?
+                AS608_PACKET_END_DATA : AS608_PACKET_DATA,
+                segment, sizeof(segment));
+        }
+        uint8_t storage[514U];
+        (void)memset(storage, 0xC7, sizeof(storage));
+        as608_template_buffer_t output = {storage + 1U, 512U, 42U};
+        const as608_result_t result = as608_upload_template(
+            &dev, AS608_CHAR_BUFFER_1, &output);
+        assert(result.status != AS608_STATUS_OK);
+        assert(dev.state == AS608_STATE_DESYNCHRONIZED);
+        assert(output.length == 42U);
+        assert(storage[0] == 0xC7U && storage[513U] == 0xC7U);
+    }
+
+    /* Any truncated stream ending at a non-template length must fail. */
+    {
+        mock_t m = {.split = 32U};
+        as608_t dev;
+        setup(&dev, &m);
+        ack(&m, AS608_ACK_OK, NULL, 0U);
+        append_frame(&m, AS608_PACKET_END_DATA, segment, sizeof(segment));
+        uint8_t storage[AS608_TEMPLATE_MAX_BYTES] = {0};
+        as608_template_buffer_t output = {storage, sizeof(storage), 55U};
+        const as608_result_t result = as608_upload_template(
+            &dev, AS608_CHAR_BUFFER_1, &output);
+        assert(result.status == AS608_STATUS_UNEXPECTED_REPLY);
+        assert(output.length == 55U);
+        assert(dev.state == AS608_STATE_DESYNCHRONIZED);
+    }
+
+    /* Write refuses unsupported sizes before touching the UART. */
+    {
+        mock_t m = {.split = 32U};
+        as608_t dev;
+        setup(&dev, &m);
+        uint8_t model[AS608_TEMPLATE_MAX_BYTES] = {0};
+        assert(as608_download_template(&dev, AS608_CHAR_BUFFER_1,
+                                       model, 640U).status ==
+               AS608_STATUS_INVALID_ARG);
+        assert(as608_write_template(&dev, 1U, model, 640U).status ==
+               AS608_STATUS_INVALID_ARG);
+        assert(m.tx_len == 0U && dev.state == AS608_STATE_READY);
+    }
 }
 
 int main(void)
@@ -342,6 +466,8 @@ int main(void)
     test_information_and_database_commands();
     test_protocol_error_quarantines_device();
     test_blob_timeout_and_index_capacity();
+    test_template_768_upload_and_download();
+    test_template_receive_limits_and_length_semantics();
     puts("as608 command tests: PASS");
     return 0;
 }
