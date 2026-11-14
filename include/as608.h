@@ -21,8 +21,16 @@ extern "C" {
 
 /** @brief Factory-default AS60x packet address; not a unique serial number. */
 #define AS608_DEFAULT_ADDRESS UINT32_C(0xFFFFFFFF)
-/** @brief Size of a complete template in the referenced AS60x firmware. */
-#define AS608_TEMPLATE_BYTES ((size_t)512U)
+/** @brief Documented AS60x template size (Communication Manual v1.0, p. 6). */
+#define AS608_TEMPLATE_512_BYTES ((size_t)512U)
+/** @brief Template stream size verified on the two tested AS608_QCCF modules. */
+#define AS608_TEMPLATE_768_BYTES ((size_t)768U)
+/** @brief Largest template size supported by this driver version. */
+#define AS608_TEMPLATE_MAX_BYTES AS608_TEMPLATE_768_BYTES
+/** @brief Legacy storage-allocation alias; NOT a template's actual length.
+ * @deprecated Prefer AS608_TEMPLATE_MAX_BYTES and the returned buffer.length.
+ */
+#define AS608_TEMPLATE_BYTES AS608_TEMPLATE_MAX_BYTES
 /** @brief Size of the flash information page returned by ReadINFpage. */
 #define AS608_INFORMATION_PAGE_BYTES ((size_t)512U)
 /** @brief Maximum whole-transaction timeout for wrap-safe uint32_t ticks. */
@@ -126,6 +134,19 @@ typedef struct {
     uint16_t page_id; /**< Matched database position. */
     uint16_t score;   /**< Firmware-defined score; not a probability. */
 } as608_match_t;
+
+/**
+ * @brief Caller-owned destination for an uploaded fingerprint template.
+ * @details Set data and capacity before reading. On successful completion,
+ * length is the actual number of bytes received up to END_DATA; 512 and 768
+ * are accepted. On any failure, length is unchanged and the data buffer may
+ * contain partial data.
+ */
+typedef struct {
+    uint8_t *data;   /**< [in] Writable template storage. */
+    size_t capacity; /**< [in] Available storage bytes (at least 512). */
+    size_t length;   /**< [out] Actual template bytes, success only. */
+} as608_template_buffer_t;
 
 /**
  * @brief Search input and output in a single caller-owned object.
@@ -292,24 +313,28 @@ as608_result_t as608_search(as608_t *dev, as608_search_t *search);
 as608_result_t as608_load_template(as608_t *dev, as608_char_buffer_t buffer, uint16_t page_id);
 
 /**
- * @brief Transfer an opaque 512-byte model to host memory (PS_UpChar, 0x08).
+ * @brief Upload an opaque model from CharBuffer1/2 (PS_UpChar, 0x08).
  * @param[in,out] dev Initialized device.
- * @param[in] buffer Source buffer containing a *complete* 512-byte model.
- * @param[out] data Destination buffer, may be partially modified on error.
- * @param[in] capacity Capacity of data; must be >= AS608_TEMPLATE_BYTES.
- * @return Transaction status and device confirmation.
- * @note Upload success does not guarantee cross-module template compatibility.
+ * @param[in] buffer Source character buffer containing a complete model.
+ * @param[in,out] output Caller-owned storage; capacity >= 512 bytes.
+ * @return Host status and sensor confirmation.
+ * @details Receives DATA until a validated END_DATA; accepts exactly 512 or
+ * 768 template bytes. On success output->length is the actual received length.
+ * On failure length remains unchanged and data may be partially overwritten.
+ * @warning An undersized buffer quarantines the link; do not retry without
+ * physical recovery. Upload does not establish cross-firmware compatibility.
  */
-as608_result_t as608_upload_template(as608_t *dev, as608_char_buffer_t buffer, uint8_t *data, size_t capacity);
+as608_result_t as608_upload_template(as608_t *dev, as608_char_buffer_t buffer, as608_template_buffer_t *output);
 
 /**
- * @brief Transfer an opaque 512-byte model to a sensor buffer (PS_DownChar, 0x09).
+ * @brief Transfer an opaque model to a sensor buffer (PS_DownChar, 0x09).
  * @param[in,out] dev Initialized device.
  * @param[in] buffer Destination character buffer.
- * @param[in] data Source model bytes.
- * @param[in] length Must equal AS608_TEMPLATE_BYTES.
+ * @param[in] data Complete model bytes.
+ * @param[in] length Actual model length (512 or 768 bytes).
  * @return Transaction status and device confirmation.
- * @warning ACK success does not prove the model can be matched by this module.
+ * @warning Pass the exact source length, not the destination capacity.
+ * ACK success does not prove cross-module matching compatibility.
  */
 as608_result_t as608_download_template(as608_t *dev, as608_char_buffer_t buffer, const uint8_t *data, size_t length);
 
@@ -324,27 +349,18 @@ as608_result_t as608_download_template(as608_t *dev, as608_char_buffer_t buffer,
 as608_result_t as608_store_template(as608_t *dev, as608_char_buffer_t buffer, uint16_t page_id);
 
 /**
- * @brief Read a database template into caller-owned memory.
- * @details
- * Convenience operation: PS_LoadChar (0x07), then PS_UpChar (0x08),
- * using CharBuffer1. The two commands and all data packets share one
- * overall transaction deadline.
- *
- * @param[in,out] dev Initialized device context.
- * @param[in] page_id Database slot to read (not an intrinsic template ID).
- * @param[out] data Destination for a complete, opaque template.
- * @param[in] capacity Available destination bytes.
- * @return Host status and device confirmation of the failing step,
- *         or successful completion of both steps.
- *
- * @pre capacity >= AS608_TEMPLATE_BYTES.
- * @note On success the first AS608_TEMPLATE_BYTES bytes contain the template.
- * @warning CharBuffer1 is overwritten. On failure data may be partially
- *          modified; discard it unless both result fields indicate success.
- * @note PageID is a database location, not a value to extract from the
- *       transferred template bytes.
+ * @brief Load and upload a database template (LoadChar, then UpChar).
+ * @details Uses CharBuffer1 and one total deadline for both commands and
+ * stream packets. END_DATA, not buffer fullness, ends a valid stream.
+ * @param[in,out] dev Initialized device.
+ * @param[in] page_id Database slot, not an intrinsic template ID.
+ * @param[in,out] output Destination and actual-length output.
+ * @return Status/confirmation of the failing step, or successful completion.
+ * @note On success output->length is 512 or 768 bytes. On failure length
+ * is unchanged, data may be partially overwritten, and the link may require
+ * recovery. CharBuffer1 is overwritten on a successful LoadChar.
  */
-as608_result_t as608_read_template(as608_t *dev, uint16_t page_id, uint8_t *data, size_t capacity);
+as608_result_t as608_read_template(as608_t *dev, uint16_t page_id, as608_template_buffer_t *output);
 
 /**
  * @brief Import and store a template in a specified database slot.
@@ -357,11 +373,11 @@ as608_result_t as608_read_template(as608_t *dev, uint16_t page_id, uint8_t *data
  * @param[in,out] dev Initialized device context.
  * @param[in] page_id Destination database slot.
  * @param[in] data Complete, opaque template from a compatible module.
- * @param[in] length Template size; must equal AS608_TEMPLATE_BYTES.
+ * @param[in] length Actual template size (512 or 768 bytes), NOT capacity.
  * @return Host status and device confirmation of the failing step,
  *         or successful completion of both steps.
  *
- * @pre data != NULL and length == AS608_TEMPLATE_BYTES.
+ * @pre data != NULL and length is AS608_TEMPLATE_512_BYTES or AS608_TEMPLATE_768_BYTES.
  * @warning CharBuffer1 is overwritten; an occupied page_id may be replaced.
  * @warning This operation is not atomic: a failure after DownChar may leave
  *          the buffer changed, while StoreChar may fail or complete
