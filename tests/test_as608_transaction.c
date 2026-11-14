@@ -65,7 +65,7 @@ static uint32_t fake_clock(void *user)
 static void setup(as608_t *dev, fake_port_t *f, uint32_t timeout)
 {
     memset(dev, 0, sizeof(*dev));
-    dev->initialized = 1U;
+    dev->state = AS608_STATE_READY;
     dev->config.device_address = AS608_DEFAULT_ADDRESS;
     dev->config.timeout_ms = timeout;
     dev->config.port.user = f;
@@ -283,7 +283,7 @@ static void test_late_ack_and_reset(void)
     uint8_t ack = 0U;
     as608_transaction_rx_t rx = {&ack, 1U, 0U, AS608_PACKET_ACK};
     assert(as608_transaction_receive(&txn, &rx) == AS608_STATUS_TIMEOUT);
-    assert(dev.link_unsynchronized != 0U);
+    assert(dev.state == AS608_STATE_DESYNCHRONIZED);
 
     memcpy(f.rx, stale_ack, sizeof(stale_ack));
     f.rx_len = sizeof(stale_ack);
@@ -295,7 +295,7 @@ static void test_late_ack_and_reset(void)
     assert(f.rx_pos == 0U && f.tx_len == tx_len);
     assert(as608_recover(&dev) == AS608_STATUS_OK);
     assert(f.recover_calls == 1U && f.rx_pos == f.rx_len);
-    assert(dev.link_unsynchronized == 0U);
+    assert(dev.state == AS608_STATE_READY);
     assert(as608_transaction_begin(&next, &dev) == AS608_STATUS_OK);
 }
 
@@ -305,18 +305,18 @@ static void test_missing_failed_and_timed_out_reset(void)
                      .recover_ticks = 1U, .recover_fail = 1};
     as608_t dev;
     setup(&dev, &f, 16U);
-    dev.link_unsynchronized = 1U;
+    dev.state = AS608_STATE_DESYNCHRONIZED;
     assert(as608_recover(&dev) == AS608_STATUS_RECOVERY_REQUIRED);
     dev.config.port.recover = fake_recover;
     assert(as608_recover(&dev) == AS608_STATUS_IO_ERROR);
-    assert(dev.link_unsynchronized != 0U);
+    assert(dev.state == AS608_STATE_DESYNCHRONIZED);
     f.recover_fail = 0;
     f.recover_ticks = 16U;
     assert(as608_recover(&dev) == AS608_STATUS_TIMEOUT);
-    assert(dev.link_unsynchronized != 0U);
+    assert(dev.state == AS608_STATE_DESYNCHRONIZED);
     f.recover_ticks = 1U;
     assert(as608_recover(&dev) == AS608_STATUS_OK);
-    assert(dev.link_unsynchronized == 0U);
+    assert(dev.state == AS608_STATE_READY);
 }
 
 static void test_invalid_input_not_quarantined(void)
@@ -330,7 +330,33 @@ static void test_invalid_input_not_quarantined(void)
     assert(as608_transaction_begin(&txn, &dev) == AS608_STATUS_OK);
     assert(as608_transaction_send(&txn, AS608_PACKET_ACK,
                                   NULL, 0U) == AS608_STATUS_INVALID_ARG);
-    assert(dev.link_unsynchronized == 0U);
+    assert(dev.state == AS608_STATE_READY);
+}
+
+
+static void test_device_lifecycle_states(void)
+{
+    as608_t uninitialized = {0};
+    as608_transaction_t txn = {0};
+    assert(uninitialized.state == AS608_STATE_UNINITIALIZED);
+    assert(as608_transaction_begin(&txn, &uninitialized) ==
+           AS608_STATUS_NOT_INITIALIZED);
+    assert(as608_recover(&uninitialized) == AS608_STATUS_NOT_INITIALIZED);
+
+    fake_port_t f = {.chunk = 16U, .tick_per_call = 1U};
+    as608_t dev;
+    setup(&dev, &f, 16U);
+    assert(dev.state == AS608_STATE_READY);
+    assert(as608_transaction_begin(&txn, &dev) == AS608_STATUS_OK);
+
+    dev.state = AS608_STATE_DESYNCHRONIZED;
+    assert(as608_transaction_begin(&txn, &dev) ==
+           AS608_STATUS_RECOVERY_REQUIRED);
+
+    dev.state = (as608_state_t)99;
+    assert(as608_transaction_begin(&txn, &dev) ==
+           AS608_STATUS_RECOVERY_REQUIRED);
+    assert(as608_recover(&dev) == AS608_STATUS_RECOVERY_REQUIRED);
 }
 
 int main(void)
@@ -347,6 +373,7 @@ int main(void)
     test_late_ack_and_reset();
     test_missing_failed_and_timed_out_reset();
     test_invalid_input_not_quarantined();
+    test_device_lifecycle_states();
     puts("as608 transaction tests: PASS");
     return 0;
 }
