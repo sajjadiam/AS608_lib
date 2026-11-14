@@ -24,7 +24,8 @@ static bool as608_rx_kind_is_valid(uint8_t kind) {
 }
 
 static bool as608_transaction_is_active(const as608_transaction_t *txn) {
-    return (txn != NULL) && (txn->dev != NULL) && (txn->dev->initialized != 0U);
+    return (txn != NULL) && (txn->dev != NULL) &&
+           (txn->dev->state != AS608_STATE_UNINITIALIZED);
 }
 
 static as608_status_t as608_remaining_ms(const as608_transaction_t *txn, uint32_t *remaining) {
@@ -78,15 +79,15 @@ static as608_status_t as608_read_exact(as608_transaction_t *txn, uint8_t *data, 
 static as608_status_t as608_transaction_fail(as608_transaction_t *txn, as608_status_t status) {
     if (status != AS608_STATUS_OK) {
         txn->fault = status;
-        txn->dev->link_unsynchronized = 1U;
+        txn->dev->state = AS608_STATE_DESYNCHRONIZED;
     }
     return status;
 }
 
 as608_status_t as608_transaction_begin(as608_transaction_t *txn, as608_t *dev) {
     if ((txn == NULL) || (dev == NULL)) return AS608_STATUS_INVALID_ARG;
-    if (dev->initialized == 0U) return AS608_STATUS_NOT_INITIALIZED;
-    if (dev->link_unsynchronized != 0U) return AS608_STATUS_RECOVERY_REQUIRED;
+    if (dev->state == AS608_STATE_UNINITIALIZED) return AS608_STATUS_NOT_INITIALIZED;
+    if (dev->state != AS608_STATE_READY) return AS608_STATUS_RECOVERY_REQUIRED;
     const as608_config_t *config = &dev->config;
     if (!config->port.write || !config->port.read || !config->port.clock_ms ||
         (config->timeout_ms == 0U) || (config->timeout_ms > AS608_MAX_TIMEOUT_MS)) {
@@ -175,7 +176,7 @@ as608_status_t as608_transaction_send(
 {
     if (!as608_transaction_is_active(txn)) return AS608_STATUS_NOT_INITIALIZED;
     if (txn->fault != AS608_STATUS_OK) return txn->fault;
-    if (txn->dev->link_unsynchronized != 0U) return AS608_STATUS_RECOVERY_REQUIRED;
+    if (txn->dev->state != AS608_STATE_READY) return AS608_STATUS_RECOVERY_REQUIRED;
     if (!as608_tx_kind_is_valid(kind) || (size > AS608_PACKET_WIRE_PAYLOAD_MAX) ||
         ((payload == NULL) && (size != 0U)) || ((kind == AS608_PACKET_COMMAND) && (size == 0U)))
     {
@@ -199,7 +200,7 @@ as608_status_t as608_transaction_receive(
 {
     if (!as608_transaction_is_active(txn)) return AS608_STATUS_NOT_INITIALIZED;
     if (txn->fault != AS608_STATUS_OK) return txn->fault;
-    if (txn->dev->link_unsynchronized != 0U) return AS608_STATUS_RECOVERY_REQUIRED;
+    if (txn->dev->state != AS608_STATE_READY) return AS608_STATUS_RECOVERY_REQUIRED;
     if (!frame || (!frame->data && (frame->capacity != 0U))) return AS608_STATUS_INVALID_ARG;
 
     as608_packet_header_t header;
@@ -222,8 +223,12 @@ as608_status_t as608_recover(as608_t *dev)
     if (dev == NULL) {
         return AS608_STATUS_INVALID_ARG;
     }
-    if (dev->initialized == 0U) {
+    if (dev->state == AS608_STATE_UNINITIALIZED) {
         return AS608_STATUS_NOT_INITIALIZED;
+    }
+    if ((dev->state != AS608_STATE_READY) &&
+        (dev->state != AS608_STATE_DESYNCHRONIZED)) {
+        return AS608_STATUS_RECOVERY_REQUIRED;
     }
     const as608_config_t *config = &dev->config;
     if (config->port.recover == NULL) {
@@ -236,7 +241,7 @@ as608_status_t as608_recover(as608_t *dev)
     }
 
     /* A failed reset can also disrupt a previously valid communication. */
-    dev->link_unsynchronized = 1U;
+    dev->state = AS608_STATE_DESYNCHRONIZED;
     const uint32_t start = config->port.clock_ms(config->port.user);
     const int32_t result = config->port.recover(config->port.user,
                                                 config->timeout_ms);
@@ -247,6 +252,6 @@ as608_status_t as608_recover(as608_t *dev)
     if (result != 0) {
         return AS608_STATUS_IO_ERROR;
     }
-    dev->link_unsynchronized = 0U;
+    dev->state = AS608_STATE_READY;
     return AS608_STATUS_OK;
 }
