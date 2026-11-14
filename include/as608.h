@@ -188,6 +188,18 @@ as608_result_t as608_read_parameters(as608_t *dev, as608_parameters_t *out);
 as608_result_t as608_get_template_count(as608_t *dev, uint16_t *count);
 
 /**
+ * @brief Read a 32-byte occupancy bitmap from PS_ReadIndexTable (0x1F).
+ * @param[in,out] dev Initialized device context.
+ * @param[in] index_page Index-table page number (256 template slots per page).
+ * @param[out] bitmap Destination for 32 occupancy bytes.
+ * @param[in] capacity Destination capacity; must be at least 32 bytes.
+ * @return Host transaction status and raw sensor confirmation.
+ * @warning Availability is firmware-dependent; verify on the target AS608_QCCF.
+ * @note bitmap is unchanged unless the command succeeds.
+ */
+as608_result_t as608_read_index_table(as608_t *dev, uint8_t index_page, uint8_t *bitmap, size_t capacity);
+
+/**
  * @brief Read the raw 512-byte information page via PS_ReadINFpage (0x16).
  * @param[in,out] dev Initialized device.
  * @param[out] data Caller-owned destination, may be partially modified on error.
