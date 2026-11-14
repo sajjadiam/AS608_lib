@@ -195,8 +195,7 @@ as608_result_t as608_get_template_count(as608_t *dev, uint16_t *count);
  * @return Transaction status and device confirmation.
  * @warning This page may contain sensitive settings. Do not dump it to logs.
  */
-as608_result_t as608_read_information_page(as608_t *dev, uint8_t *data,
-                                                size_t capacity);
+as608_result_t as608_read_information_page(as608_t *dev, uint8_t *data, size_t capacity);
 
 /**
  * @brief Capture an image into the sensor's ImageBuffer (PS_GetImage, 0x01).
@@ -247,8 +246,7 @@ as608_result_t as608_search(as608_t *dev, as608_search_t *search);
  * @param[in] page_id Existing database position.
  * @return Transaction status and device confirmation.
  */
-as608_result_t as608_load_template(as608_t *dev, as608_char_buffer_t buffer,
-                                      uint16_t page_id);
+as608_result_t as608_load_template(as608_t *dev, as608_char_buffer_t buffer, uint16_t page_id);
 
 /**
  * @brief Transfer an opaque 512-byte model to host memory (PS_UpChar, 0x08).
@@ -259,8 +257,7 @@ as608_result_t as608_load_template(as608_t *dev, as608_char_buffer_t buffer,
  * @return Transaction status and device confirmation.
  * @note Upload success does not guarantee cross-module template compatibility.
  */
-as608_result_t as608_upload_template(as608_t *dev, as608_char_buffer_t buffer,
-                                         uint8_t *data, size_t capacity);
+as608_result_t as608_upload_template(as608_t *dev, as608_char_buffer_t buffer, uint8_t *data, size_t capacity);
 
 /**
  * @brief Transfer an opaque 512-byte model to a sensor buffer (PS_DownChar, 0x09).
@@ -271,8 +268,7 @@ as608_result_t as608_upload_template(as608_t *dev, as608_char_buffer_t buffer,
  * @return Transaction status and device confirmation.
  * @warning ACK success does not prove the model can be matched by this module.
  */
-as608_result_t as608_download_template(as608_t *dev, as608_char_buffer_t buffer,
-                                           const uint8_t *data, size_t length);
+as608_result_t as608_download_template(as608_t *dev, as608_char_buffer_t buffer, const uint8_t *data, size_t length);
 
 /**
  * @brief Store a buffered model in flash (PS_StoreChar, 0x06).
@@ -282,8 +278,7 @@ as608_result_t as608_download_template(as608_t *dev, as608_char_buffer_t buffer,
  * @return Transaction status and device confirmation.
  * @warning May overwrite an existing enrollment.
  */
-as608_result_t as608_store_template(as608_t *dev, as608_char_buffer_t buffer,
-                                       uint16_t page_id);
+as608_result_t as608_store_template(as608_t *dev, as608_char_buffer_t buffer, uint16_t page_id);
 
 /**
  * @brief Delete consecutive templates (PS_DeletChar, 0x0C).
@@ -293,8 +288,7 @@ as608_result_t as608_store_template(as608_t *dev, as608_char_buffer_t buffer,
  * @return Transaction status and device confirmation.
  * @warning Destructive command.
  */
-as608_result_t as608_delete_templates(as608_t *dev, uint16_t start_page,
-                                          uint16_t page_count);
+as608_result_t as608_delete_templates(as608_t *dev, uint16_t start_page, uint16_t page_count);
 
 /**
  * @brief Erase all enrolled templates (PS_Empty, 0x0D).

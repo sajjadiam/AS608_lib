@@ -42,8 +42,7 @@ extern "C" {
 #define AS608_PACKET_CHECKSUM_BYTES ((size_t)2U)
 
 /** @brief Fixed wire-frame overhead, excluding the payload. */
-#define AS608_PACKET_OVERHEAD_BYTES \
-    (AS608_PACKET_HEADER_BYTES + AS608_PACKET_CHECKSUM_BYTES)
+#define AS608_PACKET_OVERHEAD_BYTES (AS608_PACKET_HEADER_BYTES + AS608_PACKET_CHECKSUM_BYTES)
 
 /**
  * @brief Largest payload representable by the 16-bit wire Length field.
@@ -83,9 +82,7 @@ typedef struct {
  *
  * @note Payload and checksum must be transmitted separately by the caller.
  */
-as608_status_t as608_packet_encode_header(
-    const as608_packet_header_t *header,
-    uint8_t *wire);
+as608_status_t as608_packet_encode_header(const as608_packet_header_t *header, uint8_t *wire);
 
 /**
  * @brief Decode and validate a complete nine-byte packet header.
@@ -108,7 +105,8 @@ as608_status_t as608_packet_decode_header(
     const uint8_t *wire,
     uint32_t expected_address,
     size_t max_payload_size,
-    as608_packet_header_t *header);
+    as608_packet_header_t *header
+);
 
 /**
  * @brief Initial checksum of Kind and both wire Length bytes.
@@ -128,8 +126,7 @@ uint16_t as608_packet_checksum_begin(const as608_packet_header_t *header);
  * @note Use repeatedly for streamed payloads to avoid large temporary
  *       allocations. This is additive checksum, not CRC.
  */
-uint16_t as608_packet_checksum_update(
-    uint16_t sum, const uint8_t *data, size_t length);
+uint16_t as608_packet_checksum_update(uint16_t sum, const uint8_t *data, size_t length);
 
 /**
  * @brief Encode a checksum to the two-byte, big-endian wire trailer.
@@ -137,8 +134,7 @@ uint16_t as608_packet_checksum_update(
  * @param[out] wire Pointer to writable storage of at least AS608_PACKET_CHECKSUM_BYTES bytes.
  * @pre wire is non-NULL and points to at least AS608_PACKET_CHECKSUM_BYTES bytes.
  */
-void as608_packet_checksum_encode(
-    uint16_t sum, uint8_t *wire);
+void as608_packet_checksum_encode(uint16_t sum, uint8_t *wire);
 
 /**
  * @brief Check a received checksum trailer against the accumulated sum.
@@ -147,8 +143,7 @@ void as608_packet_checksum_encode(
  * @return true if equal; false otherwise.
  * @pre wire is non-NULL and points to at least AS608_PACKET_CHECKSUM_BYTES bytes.
  */
-bool as608_packet_checksum_matches(
-    uint16_t sum, const uint8_t *wire);
+bool as608_packet_checksum_matches(uint16_t sum, const uint8_t *wire);
 
 #ifdef __cplusplus
 }

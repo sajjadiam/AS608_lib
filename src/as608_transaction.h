@@ -37,8 +37,7 @@ typedef struct {
  * @return Host status. The transaction deadline begins at this call.
  * @note No heap allocation, no global state and no implicit locking.
  */
-as608_status_t as608_transaction_begin(
-    as608_transaction_t *txn, as608_t *dev);
+as608_status_t as608_transaction_begin(as608_transaction_t *txn, as608_t *dev);
 
 /**
  * @brief Transmit one complete command/data/end-data frame.
@@ -53,7 +52,8 @@ as608_status_t as608_transaction_send(
     as608_transaction_t *txn,
     as608_packet_kind_t kind,
     const uint8_t *payload,
-    size_t size);
+    size_t size
+);
 
 /**
  * @brief Caller-owned destination and verified metadata for one RX frame.
@@ -80,9 +80,7 @@ typedef struct {
  * @warning Recovery of late bytes after timeout needs a device-level policy:
  *          this protocol supplies no sequence number to bind ACK to command.
  */
-as608_status_t as608_transaction_receive(
-    as608_transaction_t *txn,
-    as608_transaction_rx_t *frame);
+as608_status_t as608_transaction_receive(as608_transaction_t *txn, as608_transaction_rx_t *frame);
 
 #ifdef __cplusplus
 }

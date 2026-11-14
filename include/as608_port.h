@@ -29,8 +29,7 @@ extern "C" {
  * @pre 0 < length <= INT32_MAX.
  * @note A call shall not block longer than timeout_ms.
  */
-typedef int32_t (*as608_write_fn)(void *user, const uint8_t *data,
-                                  size_t length, uint32_t timeout_ms);
+typedef int32_t (*as608_write_fn)(void *user, const uint8_t *data, size_t length, uint32_t timeout_ms);
 
 /**
  * @brief Receive up to length bytes.
@@ -38,8 +37,7 @@ typedef int32_t (*as608_write_fn)(void *user, const uint8_t *data,
  * @pre 0 < length <= INT32_MAX.
  * @note A call shall not block longer than timeout_ms.
  */
-typedef int32_t (*as608_read_fn)(void *user, uint8_t *data,
-                                 size_t length, uint32_t timeout_ms);
+typedef int32_t (*as608_read_fn)(void *user, uint8_t *data, size_t length, uint32_t timeout_ms);
 
 /** @brief Return monotonic milliseconds modulo 2^32. */
 typedef uint32_t (*as608_clock_ms_fn)(void *user);
