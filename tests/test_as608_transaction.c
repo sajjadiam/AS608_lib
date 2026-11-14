@@ -13,6 +13,9 @@ typedef struct {
     uint32_t now;
     uint32_t tick_per_call;
     int fail_write, fail_read;
+    int recover_fail;
+    unsigned recover_calls;
+    uint32_t recover_ticks;
 } fake_port_t;
 
 static int32_t fake_write(void *user, const uint8_t *src,
@@ -41,6 +44,17 @@ static int32_t fake_read(void *user, uint8_t *dst,
     if (len != 0U) memcpy(dst, &f->rx[f->rx_pos], len);
     f->rx_pos += len;
     return (int32_t)len;
+}
+
+static int32_t fake_recover(void *user, uint32_t timeout_ms)
+{
+    fake_port_t *f = user;
+    assert(timeout_ms > 0U);
+    ++f->recover_calls;
+    f->now += f->recover_ticks;
+    if (f->recover_fail) return -1;
+    f->rx_pos = f->rx_len; /* Physical reset and UART RX reset simulated. */
+    return 0;
 }
 
 static uint32_t fake_clock(void *user)
@@ -249,6 +263,76 @@ static void test_empty_ack_is_rejected(void)
     assert(byte == 0xBBU);
 }
 
+
+static void test_late_ack_and_reset(void)
+{
+    static const uint8_t stale_ack[] = {
+        0xEF, 0x01, 0xFF, 0xFF, 0xFF, 0xFF,
+        0x07, 0x00, 0x03, 0x00, 0x00, 0x0A
+    };
+    fake_port_t f = {.chunk = 1U, .tick_per_call = 1U,
+                     .recover_ticks = 2U};
+    as608_t dev;
+    setup(&dev, &f, 16U);
+    dev.config.port.recover = fake_recover;
+    as608_transaction_t txn;
+    assert(as608_transaction_begin(&txn, &dev) == AS608_STATUS_OK);
+    const uint8_t cmd = 1U;
+    assert(as608_transaction_send(&txn, AS608_PACKET_COMMAND,
+                                  &cmd, 1U) == AS608_STATUS_OK);
+    uint8_t ack = 0U;
+    as608_transaction_rx_t rx = {&ack, 1U, 0U, AS608_PACKET_ACK};
+    assert(as608_transaction_receive(&txn, &rx) == AS608_STATUS_TIMEOUT);
+    assert(dev.link_unsynchronized != 0U);
+
+    memcpy(f.rx, stale_ack, sizeof(stale_ack));
+    f.rx_len = sizeof(stale_ack);
+    f.rx_pos = 0U;
+    as608_transaction_t next;
+    const size_t tx_len = f.tx_len;
+    assert(as608_transaction_begin(&next, &dev) ==
+           AS608_STATUS_RECOVERY_REQUIRED);
+    assert(f.rx_pos == 0U && f.tx_len == tx_len);
+    assert(as608_recover(&dev) == AS608_STATUS_OK);
+    assert(f.recover_calls == 1U && f.rx_pos == f.rx_len);
+    assert(dev.link_unsynchronized == 0U);
+    assert(as608_transaction_begin(&next, &dev) == AS608_STATUS_OK);
+}
+
+static void test_missing_failed_and_timed_out_reset(void)
+{
+    fake_port_t f = {.chunk = 16U, .tick_per_call = 1U,
+                     .recover_ticks = 1U, .recover_fail = 1};
+    as608_t dev;
+    setup(&dev, &f, 16U);
+    dev.link_unsynchronized = 1U;
+    assert(as608_recover(&dev) == AS608_STATUS_RECOVERY_REQUIRED);
+    dev.config.port.recover = fake_recover;
+    assert(as608_recover(&dev) == AS608_STATUS_IO_ERROR);
+    assert(dev.link_unsynchronized != 0U);
+    f.recover_fail = 0;
+    f.recover_ticks = 16U;
+    assert(as608_recover(&dev) == AS608_STATUS_TIMEOUT);
+    assert(dev.link_unsynchronized != 0U);
+    f.recover_ticks = 1U;
+    assert(as608_recover(&dev) == AS608_STATUS_OK);
+    assert(dev.link_unsynchronized == 0U);
+}
+
+static void test_invalid_input_not_quarantined(void)
+{
+    fake_port_t f = {.chunk = 16U, .tick_per_call = 1U};
+    as608_t dev;
+    setup(&dev, &f, 16U);
+    as608_transaction_t txn;
+    assert(as608_transaction_begin(NULL, &dev) == AS608_STATUS_INVALID_ARG);
+    assert(as608_transaction_begin(&txn, NULL) == AS608_STATUS_INVALID_ARG);
+    assert(as608_transaction_begin(&txn, &dev) == AS608_STATUS_OK);
+    assert(as608_transaction_send(&txn, AS608_PACKET_ACK,
+                                  NULL, 0U) == AS608_STATUS_INVALID_ARG);
+    assert(dev.link_unsynchronized == 0U);
+}
+
 int main(void)
 {
     test_command_and_ack_split_over_wrap();
@@ -260,6 +344,9 @@ int main(void)
     test_io_error();
     test_unexpected_rx_packet_is_sticky();
     test_empty_ack_is_rejected();
+    test_late_ack_and_reset();
+    test_missing_failed_and_timed_out_reset();
+    test_invalid_input_not_quarantined();
     puts("as608 transaction tests: PASS");
     return 0;
 }
