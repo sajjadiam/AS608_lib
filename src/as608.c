@@ -90,31 +90,44 @@ static as608_result_t bad_reply(as608_transaction_t *txn) {
     return host_result(AS608_STATUS_UNEXPECTED_REPLY);
 }
 
-/* ACK errors are valid protocol exchanges; only malformed successful replies
- * are quarantined. 'ack' is caller-owned and includes the confirmation byte. */
+/* ACK errors are valid protocol exchanges. On success, the ACK has exactly
+ * reply->capacity bytes; a negative confirmation may have one byte instead.
+ * Command and reply storage remain owned by the calling stack frame. */
+typedef struct {
+    const uint8_t *data;
+    size_t length;
+} as608_command_view_t;
+
 static as608_result_t command_ack(as608_transaction_t *txn,
-                                  const uint8_t *command, size_t command_size,
-                                  uint8_t *ack, size_t expected_success_size)
+                                  const as608_command_view_t *command,
+                                  as608_transaction_rx_t *reply)
 {
-    as608_status_t status = as608_transaction_send(txn, AS608_PACKET_COMMAND, command, command_size);
+    if ((command == NULL) || (reply == NULL) ||
+        (command->data == NULL) || (command->length == 0U) ||
+        (reply->data == NULL) || (reply->capacity == 0U)) {
+        return host_result(AS608_STATUS_INVALID_ARG);
+    }
+
+    const as608_status_t status = as608_transaction_send(
+        txn, AS608_PACKET_COMMAND, command->data, command->length);
     if (status != AS608_STATUS_OK) return host_result(status);
 
-    as608_transaction_rx_t rx = {
-        ack, 
-        expected_success_size, 
-        0U,
-        AS608_PACKET_ACK
-    };
-    status = as608_transaction_receive(txn, &rx);
-    if (status != AS608_STATUS_OK) return host_result(status);
-    if ((rx.kind != AS608_PACKET_ACK) || (rx.length == 0U))  return bad_reply(txn);
-    if (ack[0] == (uint8_t)AS608_ACK_OK) {
-        if (rx.length != expected_success_size) return bad_reply(txn);
-    } 
-    else if ((rx.length != 1U) && (rx.length != expected_success_size)) {
+    reply->length = 0U;
+    reply->kind = AS608_PACKET_ACK;
+    const as608_status_t receive_status = as608_transaction_receive(txn, reply);
+    if (receive_status != AS608_STATUS_OK) return host_result(receive_status);
+    if ((reply->kind != AS608_PACKET_ACK) || (reply->length == 0U)) {
         return bad_reply(txn);
     }
-    return sensor_result(ack[0]);
+
+    const uint8_t confirmation = reply->data[0];
+    if (confirmation == (uint8_t)AS608_ACK_OK) {
+        if (reply->length != reply->capacity) return bad_reply(txn);
+    } else if ((reply->length != 1U) &&
+               (reply->length != reply->capacity)) {
+        return bad_reply(txn);
+    }
+    return sensor_result(confirmation);
 }
 
 static as608_result_t begin_command(as608_t *dev, as608_transaction_t *txn) {
@@ -126,7 +139,9 @@ static as608_result_t simple_command(as608_t *dev, uint8_t command) {
     const as608_result_t begun = begin_command(dev, &txn);
     if (begun.status != AS608_STATUS_OK) return begun;
     uint8_t ack[1];
-    return command_ack(&txn, &command, 1U, ack, sizeof(ack));
+    const as608_command_view_t view = {&command, 1U};
+    as608_transaction_rx_t reply = {ack, sizeof(ack), 0U, AS608_PACKET_ACK};
+    return command_ack(&txn, &view, &reply);
 }
 
 static as608_result_t buffer_command(as608_transaction_t *txn, uint8_t command, as608_char_buffer_t buffer) {
@@ -135,7 +150,9 @@ static as608_result_t buffer_command(as608_transaction_t *txn, uint8_t command, 
         (uint8_t)buffer
     };
     uint8_t ack[1];
-    return command_ack(txn, packet, sizeof(packet), ack, sizeof(ack));
+    const as608_command_view_t view = {packet, sizeof(packet)};
+    as608_transaction_rx_t reply = {ack, sizeof(ack), 0U, AS608_PACKET_ACK};
+    return command_ack(txn, &view, &reply);
 }
 
 static as608_result_t page_command(as608_transaction_t *txn, uint8_t command, as608_char_buffer_t buffer, uint16_t page) {
@@ -147,7 +164,9 @@ static as608_result_t page_command(as608_transaction_t *txn, uint8_t command, as
     };
     store_u16(&packet[2], page);
     uint8_t ack[1];
-    return command_ack(txn, packet, sizeof(packet), ack, sizeof(ack));
+    const as608_command_view_t view = {packet, sizeof(packet)};
+    as608_transaction_rx_t reply = {ack, sizeof(ack), 0U, AS608_PACKET_ACK};
+    return command_ack(txn, &view, &reply);
 }
 
 static void decode_parameters(const uint8_t *ack, as608_parameters_t *out) {
@@ -163,7 +182,9 @@ static void decode_parameters(const uint8_t *ack, as608_parameters_t *out) {
 static as608_result_t parameters_command(as608_transaction_t *txn, as608_parameters_t *parameters) {
     const uint8_t command = CMD_READ_PARAMS;
     uint8_t ack[AS608_ACK_PARAMETERS_BYTES];
-    const as608_result_t result = command_ack(txn, &command, 1U, ack, sizeof(ack));
+    const as608_command_view_t view = {&command, 1U};
+    as608_transaction_rx_t reply = {ack, sizeof(ack), 0U, AS608_PACKET_ACK};
+    const as608_result_t result = command_ack(txn, &view, &reply);
     if (succeeded(result)) decode_parameters(ack, parameters);
     return result;
 }
@@ -171,8 +192,11 @@ static as608_result_t parameters_command(as608_transaction_t *txn, as608_paramet
 /* One receive deadline covers ACK plus all DATA/END_DATA packets. The
  * destination may be partially changed on failure and must then be ignored. */
 static as608_result_t receive_blob(as608_transaction_t *txn, uint8_t *destination, size_t total) {
+    if ((destination == NULL) || (total == 0U)) {
+        return host_result(AS608_STATUS_INVALID_ARG);
+    }
     size_t offset = 0U;
-    while(1) {
+    while (offset < total) {
         as608_transaction_rx_t rx = {
             destination + offset,
             (total - offset < AS608_MAX_DATA_CHUNK) ? total - offset : AS608_MAX_DATA_CHUNK,
@@ -190,6 +214,7 @@ static as608_result_t receive_blob(as608_transaction_t *txn, uint8_t *destinatio
         }
         if (offset == total) return bad_reply(txn);
     }
+    return bad_reply(txn);
 }
 
 static as608_result_t upload_command(as608_transaction_t *txn, as608_char_buffer_t buffer, uint8_t *data, size_t length) {
@@ -251,7 +276,9 @@ as608_result_t as608_verify_password(as608_t *dev, uint32_t password) {
     };
     store_u32(&command[1], password);
     uint8_t ack[1];
-    return command_ack(&txn, command, sizeof(command), ack, sizeof(ack));
+    const as608_command_view_t view = {command, sizeof(command)};
+    as608_transaction_rx_t reply = {ack, sizeof(ack), 0U, AS608_PACKET_ACK};
+    return command_ack(&txn, &view, &reply);
 }
 
 as608_result_t as608_read_parameters(as608_t *dev, as608_parameters_t *out) {
@@ -269,13 +296,15 @@ as608_result_t as608_get_template_count(as608_t *dev, uint16_t *count) {
     if (begun.status != AS608_STATUS_OK) return begun;
     const uint8_t cmd = CMD_COUNT;
     uint8_t ack[3];
-    const as608_result_t result = command_ack(&txn, &cmd, 1U, ack, sizeof(ack));
+    const as608_command_view_t view = {&cmd, 1U};
+    as608_transaction_rx_t reply = {ack, sizeof(ack), 0U, AS608_PACKET_ACK};
+    const as608_result_t result = command_ack(&txn, &view, &reply);
     if (succeeded(result)) *count = load_u16(&ack[1]);
     return result;
 }
 
 as608_result_t as608_read_index_table(as608_t *dev, uint8_t index_page, uint8_t *bitmap, size_t capacity) {
-    if (!bitmap || !capacity < AS608_INDEX_BYTES || (index_page > 3U)) return host_result(AS608_STATUS_INVALID_ARG);
+    if ((bitmap == NULL) || (capacity < AS608_INDEX_BYTES) || (index_page > 3U)) return host_result(AS608_STATUS_INVALID_ARG);
     as608_transaction_t txn;
     const as608_result_t begun = begin_command(dev, &txn);
     if (begun.status != AS608_STATUS_OK) return begun;
@@ -284,7 +313,9 @@ as608_result_t as608_read_index_table(as608_t *dev, uint8_t index_page, uint8_t 
         index_page
     };
     uint8_t ack[1U + AS608_INDEX_BYTES];
-    const as608_result_t result = command_ack(&txn, cmd, sizeof(cmd), ack, sizeof(ack));
+    const as608_command_view_t view = {cmd, sizeof(cmd)};
+    as608_transaction_rx_t reply = {ack, sizeof(ack), 0U, AS608_PACKET_ACK};
+    const as608_result_t result = command_ack(&txn, &view, &reply);
     if (succeeded(result)) memcpy(bitmap, &ack[1], AS608_INDEX_BYTES);
     return result;
 }
@@ -296,7 +327,9 @@ as608_result_t as608_read_information_page(as608_t *dev, uint8_t *data, size_t c
     if (begun.status != AS608_STATUS_OK) return begun;
     const uint8_t cmd = CMD_READ_INFO;
     uint8_t ack[1];
-    const as608_result_t result = command_ack(&txn, &cmd, 1U, ack, sizeof(ack));
+    const as608_command_view_t view = {&cmd, 1U};
+    as608_transaction_rx_t reply = {ack, sizeof(ack), 0U, AS608_PACKET_ACK};
+    const as608_result_t result = command_ack(&txn, &view, &reply);
     if (!succeeded(result)) return result;
     return receive_blob(&txn, data, AS608_INFORMATION_PAGE_BYTES);
 }
@@ -320,7 +353,9 @@ as608_result_t as608_match_buffers(as608_t *dev, uint16_t *score) {
     if (begun.status != AS608_STATUS_OK) return begun;
     const uint8_t cmd = CMD_MATCH;
     uint8_t ack[3];
-    const as608_result_t result = command_ack(&txn, &cmd, 1U, ack, sizeof(ack));
+    const as608_command_view_t view = {&cmd, 1U};
+    as608_transaction_rx_t reply = {ack, sizeof(ack), 0U, AS608_PACKET_ACK};
+    const as608_result_t result = command_ack(&txn, &view, &reply);
     if (succeeded(result)) *score = load_u16(&ack[1]);
     return result;
 }
@@ -347,7 +382,9 @@ as608_result_t as608_search(as608_t *dev, as608_search_t *search) {
     store_u16(&cmd[2], search->start_page);
     store_u16(&cmd[4], search->page_count);
     uint8_t ack[5];
-    const as608_result_t result = command_ack(&txn, cmd, sizeof(cmd), ack, sizeof(ack));
+    const as608_command_view_t view = {cmd, sizeof(cmd)};
+    as608_transaction_rx_t reply = {ack, sizeof(ack), 0U, AS608_PACKET_ACK};
+    const as608_result_t result = command_ack(&txn, &view, &reply);
     if (succeeded(result)) {
         search->match.page_id = load_u16(&ack[1]);
         search->match.score = load_u16(&ack[3]);
@@ -424,7 +461,9 @@ as608_result_t as608_delete_templates(as608_t *dev, uint16_t start_page, uint16_
     store_u16(&cmd[1], start_page);
     store_u16(&cmd[3], page_count);
     uint8_t ack[1];
-    return command_ack(&txn, cmd, sizeof(cmd), ack, sizeof(ack));
+    const as608_command_view_t view = {cmd, sizeof(cmd)};
+    as608_transaction_rx_t reply = {ack, sizeof(ack), 0U, AS608_PACKET_ACK};
+    return command_ack(&txn, &view, &reply);
 }
 
 as608_result_t as608_empty_database(as608_t *dev) {
