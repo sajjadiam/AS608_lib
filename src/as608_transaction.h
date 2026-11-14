@@ -7,8 +7,8 @@
  * within one deadline (ACK followed by data packets, for example).
  *
  * @warning This context is per-call. Failure taints this transaction, but
- * cannot by itself make later, separately-created transactions safe: recovery
- * from late bytes after a timeout needs an explicit device-level policy.
+ * also quarantines the device. New transactions fail with
+ * AS608_STATUS_RECOVERY_REQUIRED until as608_recover() succeeds.
  */
 #ifndef AS608_TRANSACTION_H
 #define AS608_TRANSACTION_H
@@ -36,6 +36,7 @@ typedef struct {
  * @param[in,out] dev Already initialized device.
  * @return Host status. The transaction deadline begins at this call.
  * @note No heap allocation, no global state and no implicit locking.
+ * @retval AS608_STATUS_RECOVERY_REQUIRED Device link is quarantined.
  */
 as608_status_t as608_transaction_begin(as608_transaction_t *txn, as608_t *dev);
 
@@ -77,8 +78,8 @@ typedef struct {
  * @note ACK confirmation is frame->data[0]; interpretation is done by as608.c.
  * @warning The data buffer can be partially modified on failure, but
  *          frame->kind and frame->length remain unchanged.
- * @warning Recovery of late bytes after timeout needs a device-level policy:
- *          this protocol supplies no sequence number to bind ACK to command.
+ * @warning A failed receive quarantines the device until a verified physical
+ *          recovery callback succeeds; AS60x has no transaction sequence ID.
  */
 as608_status_t as608_transaction_receive(as608_transaction_t *txn, as608_transaction_rx_t *frame);
 
