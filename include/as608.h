@@ -148,15 +148,26 @@ typedef struct {
 } as608_config_t;
 
 /**
+ * @brief Lifecycle and communication synchronization state.
+ * @details Values are internal driver state, not AS60x wire values.
+ * An all-zero context has state AS608_STATE_UNINITIALIZED.
+ */
+typedef enum {
+    AS608_STATE_UNINITIALIZED = 0, /**< No valid initialization performed. */
+    AS608_STATE_READY,             /**< Ready for blocking transactions. */
+    AS608_STATE_DESYNCHRONIZED     /**< Quarantined until physical recovery. */
+} as608_state_t;
+
+/**
  * @brief Caller-owned device context; no dynamic allocation.
  * @warning Do not concurrently operate on, modify, or copy an active context.
- * @warning The first initialization assumes a known-clean sensor startup;
- *          invoking as608_init again is not a link-recovery mechanism.
+ * @warning Zero-initialize storage before first use (e.g. as608_t dev = {0}).
+ * @warning Initialization assumes a known-clean sensor startup. Calling
+ *          as608_init again must not bypass DESYNCHRONIZED; use as608_recover.
  */
 typedef struct {
     as608_config_t config; /**< Copy of initialization configuration. */
-    uint8_t initialized;   /**< Internal initialization flag; do not modify. */
-    uint8_t link_unsynchronized; /**< Driver-owned quarantine flag. */
+    as608_state_t state;   /**< Driver-owned lifecycle/link state. */
 } as608_t;
 
 /**
