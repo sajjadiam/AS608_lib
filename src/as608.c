@@ -98,35 +98,27 @@ typedef struct {
     size_t length;
 } as608_command_view_t;
 
-static as608_result_t command_ack(as608_transaction_t *txn,
-                                  const as608_command_view_t *command,
-                                  as608_transaction_rx_t *reply)
-{
-    if ((command == NULL) || (reply == NULL) ||
-        (command->data == NULL) || (command->length == 0U) ||
-        (reply->data == NULL) || (reply->capacity == 0U)) {
+static as608_result_t command_ack(as608_transaction_t *txn, const as608_command_view_t *command, as608_transaction_rx_t *reply) {
+    if (!command || !reply || !command->data || (command->length == 0U) ||
+        !reply->data || (reply->capacity == 0U))
+    {
         return host_result(AS608_STATUS_INVALID_ARG);
     }
 
-    const as608_status_t status = as608_transaction_send(
-        txn, AS608_PACKET_COMMAND, command->data, command->length);
+    const as608_status_t status = as608_transaction_send(txn, AS608_PACKET_COMMAND, command->data, command->length);
     if (status != AS608_STATUS_OK) return host_result(status);
 
     reply->length = 0U;
     reply->kind = AS608_PACKET_ACK;
     const as608_status_t receive_status = as608_transaction_receive(txn, reply);
     if (receive_status != AS608_STATUS_OK) return host_result(receive_status);
-    if ((reply->kind != AS608_PACKET_ACK) || (reply->length == 0U)) {
-        return bad_reply(txn);
-    }
+    if ((reply->kind != AS608_PACKET_ACK) || (reply->length == 0U)) return bad_reply(txn);
 
     const uint8_t confirmation = reply->data[0];
     if (confirmation == (uint8_t)AS608_ACK_OK) {
         if (reply->length != reply->capacity) return bad_reply(txn);
-    } else if ((reply->length != 1U) &&
-               (reply->length != reply->capacity)) {
-        return bad_reply(txn);
-    }
+    } 
+    else if ((reply->length != 1U) && (reply->length != reply->capacity)) return bad_reply(txn);
     return sensor_result(confirmation);
 }
 
@@ -205,13 +197,9 @@ static as608_result_t receive_blob(as608_transaction_t *txn, uint8_t *destinatio
         };
         const as608_status_t status = as608_transaction_receive(txn, &rx);
         if (status != AS608_STATUS_OK) return host_result(status);
-        if ((rx.length == 0U) || ((rx.kind != AS608_PACKET_DATA) && (rx.kind != AS608_PACKET_END_DATA))) {
-            return bad_reply(txn);
-        }
+        if ((rx.length == 0U) || ((rx.kind != AS608_PACKET_DATA) && (rx.kind != AS608_PACKET_END_DATA))) return bad_reply(txn);
         offset += rx.length;
-        if (rx.kind == AS608_PACKET_END_DATA) {
-            return (offset == total) ? sensor_result(AS608_ACK_OK) : bad_reply(txn);
-        }
+        if (rx.kind == AS608_PACKET_END_DATA) return (offset == total) ? sensor_result(AS608_ACK_OK) : bad_reply(txn);
         if (offset == total) return bad_reply(txn);
     }
     return bad_reply(txn);
