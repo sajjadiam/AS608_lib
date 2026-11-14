@@ -1,0 +1,37 @@
+name: C11 host tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  host-tests:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        compiler: [gcc, clang]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build and run packet tests
+        run: |
+          set -eu
+          mkdir -p build
+          ${{ matrix.compiler }} -std=c11 -Wall -Wextra -Werror -pedantic -Iinclude -Isrc \
+            src/as608_packet.c tests/test_as608_packet.c -o build/test_packet
+          ./build/test_packet
+      - name: Build and run transaction tests
+        run: |
+          set -eu
+          ${{ matrix.compiler }} -std=c11 -Wall -Wextra -Werror -pedantic -Iinclude -Isrc \
+            src/as608_packet.c src/as608_transaction.c tests/test_as608_transaction.c \
+            -o build/test_transaction
+          ./build/test_transaction
+      - name: Build and run command tests
+        run: |
+          set -eu
+          ${{ matrix.compiler }} -std=c11 -Wall -Wextra -Werror -pedantic -Iinclude -Isrc \
+            src/as608_packet.c src/as608_transaction.c src/as608.c \
+            tests/test_as608_commands.c -o build/test_commands
+          ./build/test_commands
