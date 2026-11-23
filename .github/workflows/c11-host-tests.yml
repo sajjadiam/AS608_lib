@@ -2,7 +2,7 @@ name: C11 host tests
 
 on:
   push:
-    branches: [main]
+    branches: [main, "feature/**"]
   pull_request:
 
 jobs:
@@ -18,20 +18,26 @@ jobs:
         run: |
           set -eu
           mkdir -p build
-          ${{ matrix.compiler }} -std=c11 -Wall -Wextra -Werror -pedantic -Iinclude -Isrc \
-            src/as608_packet.c tests/test_as608_packet.c -o build/test_packet
+          ${{ matrix.compiler }} -std=c11 -Wall -Wextra -Werror -pedantic -I. \
+            as608_packet.c test_as608_packet.c -o build/test_packet
           ./build/test_packet
       - name: Build and run transaction tests
         run: |
           set -eu
-          ${{ matrix.compiler }} -std=c11 -Wall -Wextra -Werror -pedantic -Iinclude -Isrc \
-            src/as608_packet.c src/as608_transaction.c tests/test_as608_transaction.c \
+          ${{ matrix.compiler }} -std=c11 -Wall -Wextra -Werror -pedantic -I. \
+            as608_packet.c as608_transaction.c test_as608_transaction.c \
             -o build/test_transaction
           ./build/test_transaction
       - name: Build and run command tests
         run: |
           set -eu
-          ${{ matrix.compiler }} -std=c11 -Wall -Wextra -Werror -pedantic -Iinclude -Isrc \
-            src/as608_packet.c src/as608_transaction.c src/as608.c \
-            tests/test_as608_commands.c -o build/test_commands
+          ${{ matrix.compiler }} -std=c11 -Wall -Wextra -Werror -pedantic -I. \
+            as608_packet.c as608_transaction.c as608.c \
+            test_as608_commands.c -o build/test_commands
           ./build/test_commands
+      - name: Build and run async tests
+        run: |
+          set -eu
+          ${{ matrix.compiler }} -std=c11 -Wall -Wextra -Werror -pedantic -I. \
+            as608_packet.c as608_async.c test_as608_async.c -o build/test_async
+          ./build/test_async
