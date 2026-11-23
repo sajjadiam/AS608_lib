@@ -44,7 +44,7 @@ jobs:
       - name: Build and run async UART fault tests
         run: |
           set -eu
-          ${{ matrix.compiler }} -std=c11 -Wall -Wextra -Werror -pedantic -I. \\
-            as608_packet.c as608_async.c test_as608_async_faults.c \\
+          ${{ matrix.compiler }} -std=c11 -Wall -Wextra -Werror -pedantic -I. \
+            as608_packet.c as608_async.c test_as608_async_faults.c \
             -o build/test_async_faults
           ./build/test_async_faults
