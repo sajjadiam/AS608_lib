@@ -4,7 +4,6 @@
 
 #include <string.h>
 
-enum { OP_CAPTURE = 1, OP_GEN_CHAR, OP_READ_MODEL, OP_WRITE_MODEL };
 enum {
     STEP_CAPTURE_ACK = 1, STEP_GEN_CHAR_ACK,
     STEP_LOAD_ACK, STEP_UP_ACK, STEP_UP_DATA,
@@ -102,14 +101,13 @@ static as608_status_t start_allowed(as608_async_t *ctx)
            AS608_STATUS_INVALID_ARG : AS608_STATUS_NOT_INITIALIZED;
 }
 
-static as608_status_t launch(as608_async_t *ctx, uint8_t op,
-                             const uint8_t *cmd, size_t len, uint8_t step)
+static as608_status_t launch(as608_async_t *ctx, const uint8_t *cmd,
+                             size_t len, uint8_t step)
 {
     const as608_status_t allowed = start_allowed(ctx);
     if (allowed != AS608_STATUS_OK) return allowed;
     const as608_status_t status = command_start(ctx, cmd, len, step);
     if (status != AS608_STATUS_OK) return status;
-    ctx->op = op;
     ctx->result.status = AS608_STATUS_NOT_INITIALIZED;
     ctx->result.confirmation = 0U;
     ctx->started_ms = ctx->config.clock_ms(ctx->config.user);
@@ -139,7 +137,7 @@ as608_status_t as608_async_init(as608_async_t *ctx,
 as608_status_t as608_async_capture_start(as608_async_t *ctx)
 {
     const uint8_t command[] = {CMD_GET_IMAGE};
-    return launch(ctx, OP_CAPTURE, command, sizeof(command), STEP_CAPTURE_ACK);
+    return launch(ctx, command, sizeof(command), STEP_CAPTURE_ACK);
 }
 
 as608_status_t as608_async_generate_character_start(as608_async_t *ctx,
@@ -147,7 +145,7 @@ as608_status_t as608_async_generate_character_start(as608_async_t *ctx,
 {
     if (!valid_buffer(buffer)) return AS608_STATUS_INVALID_ARG;
     const uint8_t command[] = {CMD_GEN_CHAR, (uint8_t)buffer};
-    return launch(ctx, OP_GEN_CHAR, command, sizeof(command), STEP_GEN_CHAR_ACK);
+    return launch(ctx, command, sizeof(command), STEP_GEN_CHAR_ACK);
 }
 
 as608_status_t as608_async_read_template_start(as608_async_t *ctx,
@@ -161,7 +159,7 @@ as608_status_t as608_async_read_template_start(as608_async_t *ctx,
     const uint8_t command[] = {
         CMD_LOAD_CHAR, 1U, (uint8_t)(page_id >> 8U), (uint8_t)page_id
     };
-    const as608_status_t status = launch(ctx, OP_READ_MODEL,
+    const as608_status_t status = launch(ctx,
                                          command, sizeof(command), STEP_LOAD_ACK);
     if (status == AS608_STATUS_OK) {
         ctx->page_id = page_id;
@@ -178,7 +176,7 @@ as608_status_t as608_async_write_template_start(as608_async_t *ctx,
 {
     if (data == NULL || !supported_size(length)) return AS608_STATUS_INVALID_ARG;
     const uint8_t command[] = {CMD_READ_PARAMS};
-    const as608_status_t status = launch(ctx, OP_WRITE_MODEL,
+    const as608_status_t status = launch(ctx,
                                          command, sizeof(command), STEP_PARAMS_ACK);
     if (status == AS608_STATUS_OK) {
         ctx->page_id = page_id;
@@ -189,196 +187,217 @@ as608_status_t as608_async_write_template_start(as608_async_t *ctx,
     return status;
 }
 
+
+/* The port owns the queued TX bytes after accepting them. */
+static as608_status_t send_next_chunk(as608_async_t *ctx)
+{
+    size_t length = ctx->input_length - ctx->input_offset;
+    if (length > ctx->chunk_size) length = ctx->chunk_size;
+    const as608_packet_kind_t kind =
+        ctx->input_offset + length == ctx->input_length ?
+        AS608_PACKET_END_DATA : AS608_PACKET_DATA;
+    const as608_status_t status = frame_start(
+        ctx, kind, ctx->input + ctx->input_offset, length);
+    if (status == AS608_STATUS_OK) ctx->input_offset += length;
+    return status;
+}
+
 static as608_status_t sent_frame(as608_async_t *ctx)
 {
-    if (ctx->step == STEP_DOWN_DATA) {
-        if (ctx->input_offset < ctx->input_length) {
-            size_t count = ctx->input_length - ctx->input_offset;
-            if (count > ctx->chunk_size) count = ctx->chunk_size;
-            const as608_packet_kind_t kind =
-                ((ctx->input_offset + count) == ctx->input_length) ?
-                AS608_PACKET_END_DATA : AS608_PACKET_DATA;
-            const as608_status_t status = frame_start(
-                ctx, kind, ctx->input + ctx->input_offset, count);
-            if (status == AS608_STATUS_OK) ctx->input_offset += count;
-            return status;
+    if (ctx->step != STEP_DOWN_DATA) {
+        receive_start(ctx);
+        return AS608_STATUS_OK;
+    }
+    if (ctx->input_offset < ctx->input_length) {
+        return send_next_chunk(ctx);
+    }
+    const uint8_t command[] = {
+        CMD_STORE_CHAR, 1U, (uint8_t)(ctx->page_id >> 8U),
+        (uint8_t)ctx->page_id
+    };
+    return command_start(ctx, command, sizeof(command), STEP_STORE_ACK);
+}
+
+static as608_async_progress_t next_or_fault(as608_async_t *ctx,
+                                             as608_status_t status)
+{
+    return status == AS608_STATUS_OK ? AS608_ASYNC_PENDING :
+                                      quarantine(ctx, status);
+}
+
+static as608_async_progress_t accept_template(as608_async_t *ctx)
+{
+    if (ctx->rx_kind != (uint8_t)AS608_PACKET_DATA &&
+        ctx->rx_kind != (uint8_t)AS608_PACKET_END_DATA) {
+        return quarantine(ctx, AS608_STATUS_UNEXPECTED_REPLY);
+    }
+    const size_t length = ctx->rx_payload_len;
+    if (length == 0U || length > ctx->output->capacity - ctx->output_offset) {
+        return quarantine(ctx, AS608_STATUS_UNEXPECTED_REPLY);
+    }
+    (void)memcpy(ctx->output->data + ctx->output_offset, ctx->rx_body, length);
+    ctx->output_offset += length;
+    if (ctx->rx_kind == (uint8_t)AS608_PACKET_END_DATA) {
+        if (!supported_size(ctx->output_offset)) {
+            return quarantine(ctx, AS608_STATUS_UNEXPECTED_REPLY);
         }
-        const uint8_t command[] = {
-            CMD_STORE_CHAR, 1U, (uint8_t)(ctx->page_id >> 8U),
-            (uint8_t)ctx->page_id
-        };
-        return command_start(ctx, command, sizeof(command), STEP_STORE_ACK);
+        ctx->output->length = ctx->output_offset;
+        return finish(ctx, (uint8_t)AS608_ACK_OK);
     }
     receive_start(ctx);
-    return AS608_STATUS_OK;
+    return AS608_ASYNC_PENDING;
+}
+
+static bool ack_valid(const as608_async_t *ctx)
+{
+    if (ctx->rx_kind != (uint8_t)AS608_PACKET_ACK ||
+        ctx->rx_payload_len == 0U) return false;
+    const size_t expected = ctx->step == STEP_PARAMS_ACK ? 17U : 1U;
+    return ctx->rx_payload_len == expected ||
+           (ctx->rx_body[0] != (uint8_t)AS608_ACK_OK &&
+            ctx->rx_payload_len == 1U);
 }
 
 static as608_status_t begin_download(as608_async_t *ctx)
 {
-    ctx->step = STEP_DOWN_DATA;
-    return sent_frame(ctx);
+    const uint16_t code = ((uint16_t)ctx->rx_body[13U] << 8U) |
+                          (uint16_t)ctx->rx_body[14U];
+    if (code > 3U) return AS608_STATUS_UNEXPECTED_REPLY;
+    ctx->chunk_size = (uint16_t)(32U << code);
+    const uint8_t command[] = {CMD_DOWN_CHAR, 1U};
+    return command_start(ctx, command, sizeof(command), STEP_DOWN_ACK);
 }
 
-static as608_async_progress_t validated_frame(as608_async_t *ctx)
+/* ACK phase transitions do not perform UART I/O. */
+static as608_async_progress_t success_ack(as608_async_t *ctx)
 {
-    const size_t length = ctx->rx_payload_len;
-    const uint8_t *data = ctx->rx_body;
-    if (ctx->step == STEP_UP_DATA) {
-        if (ctx->rx_kind != (uint8_t)AS608_PACKET_DATA &&
-            ctx->rx_kind != (uint8_t)AS608_PACKET_END_DATA) {
-            return quarantine(ctx, AS608_STATUS_UNEXPECTED_REPLY);
-        }
-        if (length == 0U || length > ctx->output->capacity - ctx->output_offset) {
-            return quarantine(ctx, AS608_STATUS_UNEXPECTED_REPLY);
-        }
-        (void)memcpy(ctx->output->data + ctx->output_offset, data, length);
-        ctx->output_offset += length;
-        if (ctx->rx_kind == (uint8_t)AS608_PACKET_END_DATA) {
-            if (!supported_size(ctx->output_offset)) {
-                return quarantine(ctx, AS608_STATUS_UNEXPECTED_REPLY);
-            }
-            ctx->output->length = ctx->output_offset;
-            return finish(ctx, (uint8_t)AS608_ACK_OK);
-        }
-        receive_start(ctx);
-        return AS608_ASYNC_PENDING;
-    }
-
-    if (ctx->rx_kind != (uint8_t)AS608_PACKET_ACK || length == 0U) {
-        return quarantine(ctx, AS608_STATUS_UNEXPECTED_REPLY);
-    }
-    const uint8_t ack = data[0];
-    const size_t expected = (ctx->step == STEP_PARAMS_ACK) ? 17U : 1U;
-    if ((ack == (uint8_t)AS608_ACK_OK && length != expected) ||
-        (ack != (uint8_t)AS608_ACK_OK && length != 1U && length != expected)) {
-        return quarantine(ctx, AS608_STATUS_UNEXPECTED_REPLY);
-    }
-    if (ack != (uint8_t)AS608_ACK_OK) return finish(ctx, ack);
-
-    as608_status_t status = AS608_STATUS_OK;
     switch (ctx->step) {
     case STEP_CAPTURE_ACK:
     case STEP_GEN_CHAR_ACK:
     case STEP_STORE_ACK:
-        return finish(ctx, ack);
+        return finish(ctx, (uint8_t)AS608_ACK_OK);
     case STEP_LOAD_ACK: {
         const uint8_t command[] = {CMD_UP_CHAR, 1U};
-        status = command_start(ctx, command, sizeof(command), STEP_UP_ACK);
-        break;
+        return next_or_fault(ctx,
+            command_start(ctx, command, sizeof(command), STEP_UP_ACK));
     }
     case STEP_UP_ACK:
         ctx->step = STEP_UP_DATA;
         receive_start(ctx);
         return AS608_ASYNC_PENDING;
-    case STEP_PARAMS_ACK: {
-        const uint16_t code = (uint16_t)(((uint16_t)data[13U] << 8U) |
-                                          (uint16_t)data[14U]);
-        if (code > 3U) return quarantine(ctx, AS608_STATUS_UNEXPECTED_REPLY);
-        ctx->chunk_size = (uint16_t)(32U << code);
-        const uint8_t command[] = {CMD_DOWN_CHAR, 1U};
-        status = command_start(ctx, command, sizeof(command), STEP_DOWN_ACK);
-        break;
-    }
+    case STEP_PARAMS_ACK:
+        return next_or_fault(ctx, begin_download(ctx));
     case STEP_DOWN_ACK:
-        status = begin_download(ctx);
-        break;
+        ctx->step = STEP_DOWN_DATA;
+        return next_or_fault(ctx, send_next_chunk(ctx));
     default:
         return quarantine(ctx, AS608_STATUS_UNEXPECTED_REPLY);
     }
-    if (status != AS608_STATUS_OK) return quarantine(ctx, status);
-    return AS608_ASYNC_PENDING;
 }
 
-as608_async_progress_t as608_async_process(as608_async_t *ctx)
+static as608_async_progress_t verified_packet(as608_async_t *ctx)
 {
-    if (ctx == NULL) return AS608_ASYNC_FAILED;
-    if (ctx->state == AS608_ASYNC_DONE) return AS608_ASYNC_COMPLETE;
-    if (ctx->state == AS608_ASYNC_DESYNCHRONIZED) return AS608_ASYNC_FAILED;
-    if (ctx->state != AS608_ASYNC_BUSY) return AS608_ASYNC_FAILED;
-    const uint32_t now = ctx->config.clock_ms(ctx->config.user);
-    if ((uint32_t)(now - ctx->started_ms) >= ctx->config.timeout_ms) {
-        return quarantine(ctx, AS608_STATUS_TIMEOUT);
+    if (ctx->step == STEP_UP_DATA) return accept_template(ctx);
+    if (!ack_valid(ctx)) return quarantine(ctx, AS608_STATUS_UNEXPECTED_REPLY);
+    if (ctx->rx_body[0] != (uint8_t)AS608_ACK_OK) {
+        return finish(ctx, ctx->rx_body[0]);
     }
+    return success_ack(ctx);
+}
 
-    uint8_t *destination = NULL;
-    const uint8_t *source = NULL;
-    size_t count = 0U;
-    bool writing = false;
-    switch (ctx->wire_phase) {
-    case WIRE_TX:
-        writing = true;
-        source = ctx->tx_frame + ctx->tx_pos;
-        count = ctx->tx_len - ctx->tx_pos;
-        break;
-    case WIRE_RX_HEADER:
-        destination = ctx->rx_header + ctx->rx_header_pos;
-        count = sizeof(ctx->rx_header) - ctx->rx_header_pos;
-        break;
-    case WIRE_RX_BODY:
-        destination = ctx->rx_body + ctx->rx_body_pos;
-        count = ctx->rx_body_len - ctx->rx_body_pos;
-        break;
-    default:
-        return quarantine(ctx, AS608_STATUS_UNEXPECTED_REPLY);
+static as608_status_t parse_header(as608_async_t *ctx)
+{
+    as608_packet_header_t header;
+    const as608_status_t status = as608_packet_decode_header(
+        ctx->rx_header, ctx->config.device_address,
+        sizeof(ctx->rx_body) - AS608_PACKET_CHECKSUM_BYTES, &header);
+    if (status != AS608_STATUS_OK) return status;
+    if (header.kind != (uint8_t)AS608_PACKET_ACK &&
+        header.kind != (uint8_t)AS608_PACKET_DATA &&
+        header.kind != (uint8_t)AS608_PACKET_END_DATA) {
+        return AS608_STATUS_UNEXPECTED_REPLY;
     }
-    if (count == 0U) return quarantine(ctx, AS608_STATUS_UNEXPECTED_REPLY);
-    const int32_t n = writing ?
-        ctx->config.try_write(ctx->config.user, source, count) :
-        ctx->config.try_read(ctx->config.user, destination, count);
-    if (n < 0 || (size_t)n > count) return quarantine(ctx, AS608_STATUS_IO_ERROR);
-    if (n == 0) return AS608_ASYNC_PENDING;
+    if (ctx->step == STEP_UP_DATA &&
+        (size_t)header.payload_size > ctx->output->capacity - ctx->output_offset) {
+        return AS608_STATUS_UNEXPECTED_REPLY;
+    }
+    ctx->rx_kind = header.kind;
+    ctx->rx_payload_len = header.payload_size;
+    ctx->rx_body_len = (size_t)header.payload_size + AS608_PACKET_CHECKSUM_BYTES;
+    ctx->rx_body_pos = 0U;
+    ctx->wire_phase = WIRE_RX_BODY;
+    return AS608_STATUS_OK;
+}
 
-    if (ctx->wire_phase == WIRE_TX) {
-        ctx->tx_pos += (size_t)n;
-        if (ctx->tx_pos == ctx->tx_len) {
-            const as608_status_t status = sent_frame(ctx);
-            if (status != AS608_STATUS_OK) return quarantine(ctx, status);
-        }
-        return AS608_ASYNC_PENDING;
-    }
-    if (ctx->wire_phase == WIRE_RX_HEADER) {
-        ctx->rx_header_pos += (size_t)n;
-        if (ctx->rx_header_pos == sizeof(ctx->rx_header)) {
-            as608_packet_header_t header;
-            const as608_status_t status = as608_packet_decode_header(
-                ctx->rx_header, ctx->config.device_address,
-                sizeof(ctx->rx_body) - AS608_PACKET_CHECKSUM_BYTES, &header);
-            if (status != AS608_STATUS_OK) return quarantine(ctx, status);
-            if (header.kind != (uint8_t)AS608_PACKET_ACK &&
-                header.kind != (uint8_t)AS608_PACKET_DATA &&
-                header.kind != (uint8_t)AS608_PACKET_END_DATA) {
-                return quarantine(ctx, AS608_STATUS_UNEXPECTED_REPLY);
-            }
-            if (ctx->step == STEP_UP_DATA &&
-                ((size_t)header.payload_size >
-                 ctx->output->capacity - ctx->output_offset)) {
-                return quarantine(ctx, AS608_STATUS_UNEXPECTED_REPLY);
-            }
-            ctx->rx_kind = header.kind;
-            ctx->rx_payload_len = header.payload_size;
-            ctx->rx_body_len = (size_t)header.payload_size +
-                               AS608_PACKET_CHECKSUM_BYTES;
-            ctx->rx_body_pos = 0U;
-            ctx->wire_phase = WIRE_RX_BODY;
-        }
-        return AS608_ASYNC_PENDING;
-    }
-
-    ctx->rx_body_pos += (size_t)n;
-    if (ctx->rx_body_pos != ctx->rx_body_len) return AS608_ASYNC_PENDING;
+static bool checksum_valid(const as608_async_t *ctx)
+{
     const as608_packet_header_t header = {
         ctx->config.device_address, ctx->rx_kind,
         (uint16_t)ctx->rx_payload_len
     };
     const uint16_t checksum = as608_packet_checksum_update(
-        as608_packet_checksum_begin(&header), ctx->rx_body,
-        ctx->rx_payload_len);
-    if (!as608_packet_checksum_matches(
-            checksum, ctx->rx_body + ctx->rx_payload_len)) {
-        return quarantine(ctx, AS608_STATUS_CHECKSUM_ERROR);
-    }
-    return validated_frame(ctx);
+        as608_packet_checksum_begin(&header), ctx->rx_body, ctx->rx_payload_len);
+    return as608_packet_checksum_matches(
+        checksum, ctx->rx_body + ctx->rx_payload_len);
 }
+
+static as608_async_progress_t transmit_step(as608_async_t *ctx)
+{
+    const size_t count = ctx->tx_len - ctx->tx_pos;
+    if (count == 0U) return quarantine(ctx, AS608_STATUS_UNEXPECTED_REPLY);
+    const int32_t n = ctx->config.try_write(
+        ctx->config.user, ctx->tx_frame + ctx->tx_pos, count);
+    if (n < 0 || (size_t)n > count) return quarantine(ctx, AS608_STATUS_IO_ERROR);
+    ctx->tx_pos += (size_t)n;
+    return ctx->tx_pos == ctx->tx_len ?
+        next_or_fault(ctx, sent_frame(ctx)) : AS608_ASYNC_PENDING;
+}
+
+static as608_async_progress_t header_step(as608_async_t *ctx)
+{
+    const size_t count = sizeof(ctx->rx_header) - ctx->rx_header_pos;
+    if (count == 0U) return quarantine(ctx, AS608_STATUS_UNEXPECTED_REPLY);
+    const int32_t n = ctx->config.try_read(
+        ctx->config.user, ctx->rx_header + ctx->rx_header_pos, count);
+    if (n < 0 || (size_t)n > count) return quarantine(ctx, AS608_STATUS_IO_ERROR);
+    ctx->rx_header_pos += (size_t)n;
+    return ctx->rx_header_pos == sizeof(ctx->rx_header) ?
+        next_or_fault(ctx, parse_header(ctx)) : AS608_ASYNC_PENDING;
+}
+
+static as608_async_progress_t payload_step(as608_async_t *ctx)
+{
+    const size_t count = ctx->rx_body_len - ctx->rx_body_pos;
+    if (count == 0U) return quarantine(ctx, AS608_STATUS_UNEXPECTED_REPLY);
+    const int32_t n = ctx->config.try_read(
+        ctx->config.user, ctx->rx_body + ctx->rx_body_pos, count);
+    if (n < 0 || (size_t)n > count) return quarantine(ctx, AS608_STATUS_IO_ERROR);
+    ctx->rx_body_pos += (size_t)n;
+    if (ctx->rx_body_pos != ctx->rx_body_len) return AS608_ASYNC_PENDING;
+    if (!checksum_valid(ctx)) return quarantine(ctx, AS608_STATUS_CHECKSUM_ERROR);
+    return verified_packet(ctx);
+}
+
+
+
+as608_async_progress_t as608_async_process(as608_async_t *ctx)
+{
+    if (ctx == NULL) return AS608_ASYNC_FAILED;
+    if (ctx->state == AS608_ASYNC_DONE) return AS608_ASYNC_COMPLETE;
+    if (ctx->state != AS608_ASYNC_BUSY) return AS608_ASYNC_FAILED;
+    const uint32_t elapsed = ctx->config.clock_ms(ctx->config.user) -
+                             ctx->started_ms;
+    if (elapsed >= ctx->config.timeout_ms) {
+        return quarantine(ctx, AS608_STATUS_TIMEOUT);
+    }
+    switch (ctx->wire_phase) {
+    case WIRE_TX:        return transmit_step(ctx);
+    case WIRE_RX_HEADER: return header_step(ctx);
+    case WIRE_RX_BODY:   return payload_step(ctx);
+    default:             return quarantine(ctx, AS608_STATUS_UNEXPECTED_REPLY);
+    }
+}
+
 
 bool as608_async_get_result(const as608_async_t *ctx, as608_result_t *result)
 {
