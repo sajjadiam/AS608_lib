@@ -60,7 +60,6 @@ typedef struct {
     as608_async_state_t state;
     as608_result_t result;
     uint32_t started_ms;
-    uint8_t op;
     uint8_t step;
     uint8_t wire_phase;
     uint8_t tx_frame[267U]; /* 9-byte header + 256-byte payload + 2 checksum. */
