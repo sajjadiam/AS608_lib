@@ -234,8 +234,9 @@ as608_status_t as608_init(as608_t *ctx, const as608_config_t *config);
  * @post A valid terminal ACK sets DONE and stores its raw confirmation
  * code. A transport/protocol fault during BUSY sets DESYNCHRONIZED and
  * records the host error; a non-BUSY context is left unchanged.
- * @note At rebuild stage 15, simple, system-parameter, 16-bit result,
- * index-table and search ACK phases plus information-page streaming are active.
+ * @note At rebuild stage 17, simple, system-parameter, 16-bit result,
+ * index-table and search ACK phases plus information-page and template
+ * upload streaming are active.
  * @see as608_get_result
  * @see as608_confirm_reset
  */
@@ -691,12 +692,48 @@ as608_status_t as608_search_start(as608_t *ctx, as608_search_t *search);
  */
 as608_status_t as608_load_template_start(as608_t *ctx, as608_char_buffer_t buffer, uint16_t page_id);
 
-/* Incremental rebuild: APIs 01–16 are defined.
+/**
+ * @brief Start uploading a template from a CharBuffer (PS_UpChar, 0x08).
+ *
+ * @details ACK_OK begins a sequence of DATA packets terminated by END_DATA.
+ * This API accepts only complete 512-byte (documented) or 768-byte
+ * (observed on tested AS608_QCCF modules) templates, not the 256-byte
+ * ordinary feature file described by the manual. The single job deadline
+ * covers ACK and all data packets. No flash load or automatic retry occurs.
+ *
+ * @param[in,out] ctx Initialized caller-owned device context.
+ * @param[in] buffer Source AS608_CHAR_BUFFER_1 or AS608_CHAR_BUFFER_2.
+ * @param[in,out] output Destination descriptor; set data and capacity.
+ * @retval AS608_STATUS_OK Job admitted; template not yet available.
+ * @retval AS608_STATUS_INVALID_ARG Null context, invalid buffer ID, null
+ * output or data pointer, or capacity below 512 bytes.
+ * @retval AS608_STATUS_NOT_INITIALIZED Context is not initialized.
+ * @retval AS608_STATUS_BUSY Another job owns the context.
+ * @retval AS608_STATUS_RECOVERY_REQUIRED Link is quarantined.
+ * @pre Serialize calls sharing ctx. The selected CharBuffer must contain
+ * a template. Keep output and its data storage valid, nonoverlapping,
+ * separate from driver storage and unchanged by the caller until terminal
+ * completion or abort. Provide capacity >= 768 for either supported size.
+ * @post On admission, state is BUSY. Verified fragments are copied to
+ * data; length is committed only on a valid END_DATA at a supported size.
+ * The effective receive limit is 512 or 768, whichever is the largest
+ * supported size not exceeding capacity. Bytes beyond that limit are
+ * untouched. On rejection or negative initial ACK, data and length are
+ * unchanged. On later fault or abort, length is unchanged but data may
+ * contain partial verified fragments.
+ * @note Check both terminal result fields before using the template.
+ * Firmware compatibility and actual template length must be verified.
+ * @see as608_load_template_start
+ * @see as608_process
+ * @see as608_get_result
+ * @see AS60x Communication Manual V1.0, printed pages 6 and 16.
+ */
+as608_status_t as608_upload_template_start(as608_t *ctx, as608_char_buffer_t buffer, as608_template_buffer_t *output);
+
+/* Incremental rebuild: APIs 01–17 are defined.
  * The following API declarations remain contracts until restored.
  * See FEATURES.md.
  */
-as608_status_t as608_upload_template_start(as608_t *ctx, as608_char_buffer_t buffer,
-                                         as608_template_buffer_t *output);
 as608_status_t as608_download_template_start(as608_t *ctx, as608_char_buffer_t buffer,
                                            const uint8_t *data, size_t length);
 as608_status_t as608_store_template_start(as608_t *ctx, as608_char_buffer_t buffer,

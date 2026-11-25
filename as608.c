@@ -15,6 +15,7 @@ enum as608_command {
     CMD_SEARCH = 0x04,
     CMD_REG_MODEL = 0x05,
     CMD_LOAD_CHAR = 0x07,
+    CMD_UP_CHAR = 0x08,
     CMD_READ_PARAMS = 0x0F,
     CMD_VERIFY_PASSWORD = 0x13,
     CMD_READ_INFO = 0x16,
@@ -436,8 +437,13 @@ static void stream_setup(as608_t *ctx, as608_template_buffer_t output) {
     ctx->stream_offset = 0U;
 }
 
-/* Validate the information-page ACK and arm the data receiver on success. */
-static as608_progress_t accept_info_ack(as608_t *ctx) {
+/* Check template lengths supported by the documented and tested modules. */
+static bool supported_size(size_t length) {
+    return (length == AS608_TEMPLATE_512_BYTES) || (length == AS608_TEMPLATE_768_BYTES);
+}
+
+/* Validate the initial stream ACK and arm the data receiver on success. */
+static as608_progress_t accept_stream_ack(as608_t *ctx, enum as608_step data_step) {
     const as608_transaction_frame_t frame = as608_transaction_received(&ctx->transaction);
 
     if ((frame.kind != AS608_PACKET_ACK) || (frame.length != 1U)) {
@@ -448,39 +454,55 @@ static as608_progress_t accept_info_ack(as608_t *ctx) {
         return finish(ctx, frame.data[0]);
     }
 
-    ctx->step = STEP_INFO_DATA;
-    as608_transaction_receive(&ctx->transaction, AS608_INFORMATION_PAGE_BYTES);
+    ctx->step = (uint8_t)data_step;
+    as608_transaction_receive(&ctx->transaction, ctx->stream_capacity);
     return AS608_PENDING;
 }
 
-/* Validate and copy a verified fragment; complete only at exactly 512 bytes. */
-static as608_progress_t accept_info_data(as608_t *ctx) {
+/* Validate and copy a stream fragment; commit length only on valid END_DATA. */
+static as608_progress_t accept_stream(as608_t *ctx) {
     const as608_transaction_frame_t frame = as608_transaction_received(&ctx->transaction);
 
-    if (!ctx->stream_data || (ctx->stream_offset >= AS608_INFORMATION_PAGE_BYTES) ||
-        (ctx->stream_capacity != AS608_INFORMATION_PAGE_BYTES)) {
+    if (!ctx->stream_data || (ctx->stream_offset >= ctx->stream_capacity)) {
         return quarantine(ctx, AS608_STATUS_UNEXPECTED_REPLY);
     }
 
     const size_t remaining = ctx->stream_capacity - ctx->stream_offset;
 
-    if ((frame.kind != AS608_PACKET_DATA && frame.kind != AS608_PACKET_END_DATA) ||
+    if (((frame.kind != AS608_PACKET_DATA) && (frame.kind != AS608_PACKET_END_DATA)) ||
         (frame.length == 0U) || (frame.length > remaining)) {
         return quarantine(ctx, AS608_STATUS_UNEXPECTED_REPLY);
     }
 
-    if ((frame.kind == AS608_PACKET_END_DATA) != (frame.length == remaining)) {
+    const size_t total = ctx->stream_offset + frame.length;
+    const bool end = (frame.kind == AS608_PACKET_END_DATA);
+
+    if (end) {
+        if (ctx->step == STEP_INFO_DATA) {
+            if (total != AS608_INFORMATION_PAGE_BYTES) {
+                return quarantine(ctx, AS608_STATUS_UNEXPECTED_REPLY);
+            }
+        } else {
+            if (!supported_size(total) || !ctx->stream_length) {
+                return quarantine(ctx, AS608_STATUS_UNEXPECTED_REPLY);
+            }
+        }
+    } else if (total == ctx->stream_capacity) {
         return quarantine(ctx, AS608_STATUS_UNEXPECTED_REPLY);
     }
 
     (void)memcpy(ctx->stream_data + ctx->stream_offset, frame.data, frame.length);
-    ctx->stream_offset += frame.length;
+    ctx->stream_offset = total;
 
-    if (frame.kind == AS608_PACKET_END_DATA) {
+    if (end) {
+        if (ctx->stream_length) {
+            *ctx->stream_length = total;
+        }
+
         return finish(ctx, AS608_ACK_OK);
     }
 
-    as608_transaction_receive(&ctx->transaction, ctx->stream_capacity - ctx->stream_offset);
+    as608_transaction_receive(&ctx->transaction, ctx->stream_capacity - total);
     return AS608_PENDING;
 }
 
@@ -676,6 +698,46 @@ as608_status_t as608_load_template_start(as608_t *ctx, as608_char_buffer_t buffe
  * ========================================================================= */
 
 /* =========================================================================
+ * API 17: as608_upload_template_start
+ * =========================================================================
+ * PS_UpChar (0x08), AS60x Communication Manual V1.0, pp. 6, 16.
+ * Receives a template from a selected character buffer.
+ * Supported template sizes: documented 512 and observed 768 bytes.
+ */
+
+/* Admit a template upload and retain the caller's buffer and length output. */
+static as608_status_t upload_start(as608_t *ctx, const command_t *command, as608_template_buffer_t *output) {
+    if (!output || !output->data || (output->capacity < AS608_TEMPLATE_512_BYTES)) {
+        return AS608_STATUS_INVALID_ARG;
+    }
+
+    const as608_status_t status = launch(ctx, command);
+
+    if (status == AS608_STATUS_OK) {
+        stream_setup(ctx, *output);
+        ctx->stream_capacity = (output->capacity >= AS608_TEMPLATE_768_BYTES) ?
+            AS608_TEMPLATE_768_BYTES : AS608_TEMPLATE_512_BYTES;
+        ctx->stream_length = &output->length;
+    }
+
+    return status;
+}
+
+as608_status_t as608_upload_template_start(as608_t *ctx, as608_char_buffer_t buffer, as608_template_buffer_t *output) {
+    if (!valid_buffer(buffer)) {
+        return AS608_STATUS_INVALID_ARG;
+    }
+
+    const command_t command = {{CMD_UP_CHAR, (uint8_t)buffer}, 2U, STEP_UP_ACK};
+
+    return upload_start(ctx, &command, output);
+}
+
+/* =========================================================================
+ * END API 17
+ * ========================================================================= */
+
+/* =========================================================================
  * API 02: as608_process
  * =========================================================================
  * Keep the process dispatcher after the active command API sections so
@@ -710,6 +772,7 @@ as608_progress_t as608_process(as608_t *ctx) {
 
     switch (ctx->step) {
         case STEP_SIMPLE_ACK:
+        case STEP_UP_ACK:
         case STEP_INFO_ACK: {
             limit = 1U;
             break;
@@ -730,6 +793,7 @@ as608_progress_t as608_process(as608_t *ctx) {
             limit = 5U;
             break;
         }
+        case STEP_UP_DATA:
         case STEP_INFO_DATA: {
             limit = 0U; /* Receive is armed by the preceding ACK or DATA handler. */
             break;
@@ -747,7 +811,7 @@ as608_progress_t as608_process(as608_t *ctx) {
         }
 
         case AS608_TXN_SENT: {
-            if (ctx->step == STEP_INFO_DATA) {
+            if ((ctx->step == STEP_INFO_DATA) || (ctx->step == STEP_UP_DATA)) {
                 return quarantine(ctx, AS608_STATUS_UNEXPECTED_REPLY);
             }
 
@@ -773,10 +837,14 @@ as608_progress_t as608_process(as608_t *ctx) {
                     return accept_search_ack(ctx);
                 }
                 case STEP_INFO_ACK: {
-                    return accept_info_ack(ctx);
+                    return accept_stream_ack(ctx, STEP_INFO_DATA);
                 }
-                case STEP_INFO_DATA: {
-                    return accept_info_data(ctx);
+                case STEP_UP_ACK: {
+                    return accept_stream_ack(ctx, STEP_UP_DATA);
+                }
+                case STEP_INFO_DATA:
+                case STEP_UP_DATA: {
+                    return accept_stream(ctx);
                 }
                 default: {
                     return quarantine(ctx, AS608_STATUS_UNEXPECTED_REPLY);
@@ -810,14 +878,8 @@ as608_progress_t as608_process(as608_t *ctx) {
 
 // Remaining command opcodes; migrate into enum as608_command when needed.
 //     CMD_STORE_CHAR = 0x06,
-//     CMD_UP_CHAR = 0x08, CMD_DOWN_CHAR = 0x09,
+//     CMD_DOWN_CHAR = 0x09,
 //     CMD_DELETE_CHAR = 0x0C, CMD_EMPTY = 0x0D,
-// 
-// static bool supported_size(size_t length)
-// {
-//     return (length == AS608_TEMPLATE_512_BYTES) ||
-//            (length == AS608_TEMPLATE_768_BYTES);
-// }
 // 
 // as608_status_t as608_store_template_start(as608_t *ctx, as608_char_buffer_t buffer,
 //                                         uint16_t page_id)
@@ -825,30 +887,6 @@ as608_progress_t as608_process(as608_t *ctx) {
 //     if (!valid_buffer(buffer)) return AS608_STATUS_INVALID_ARG;
 //     const command_t command = page_command(CMD_STORE_CHAR, buffer, page_id);
 //     return launch(ctx, &command);
-// }
-// 
-// static as608_status_t upload_start(as608_t *ctx, const command_t *command,
-//                                    as608_template_buffer_t *output)
-// {
-//     if (output == NULL || output->data == NULL ||
-//         output->capacity < AS608_TEMPLATE_512_BYTES) return AS608_STATUS_INVALID_ARG;
-//     const as608_status_t status = launch(ctx, command);
-//     if (status == AS608_STATUS_OK) {
-//         stream_setup(ctx, *output);
-//         if (ctx->stream_capacity > AS608_TEMPLATE_MAX_BYTES) {
-//             ctx->stream_capacity = AS608_TEMPLATE_MAX_BYTES;
-//         }
-//         ctx->stream_length = &output->length;
-//     }
-//     return status;
-// }
-// 
-// as608_status_t as608_upload_template_start(as608_t *ctx, as608_char_buffer_t buffer,
-//                                          as608_template_buffer_t *output)
-// {
-//     if (!valid_buffer(buffer)) return AS608_STATUS_INVALID_ARG;
-//     const command_t command = {{CMD_UP_CHAR, (uint8_t)buffer}, 2U, STEP_UP_ACK};
-//     return upload_start(ctx, &command, output);
 // }
 // 
 // as608_status_t as608_read_template_start(as608_t *ctx, uint16_t page_id,
@@ -948,32 +986,6 @@ as608_progress_t as608_process(as608_t *ctx) {
 //     return ctx->step == STEP_UP_DATA || ctx->step == STEP_INFO_DATA;
 // }
 // 
-// static bool stream_size_valid(const as608_t *ctx)
-// {
-//     return ctx->step == STEP_INFO_DATA ?
-//         ctx->stream_offset == AS608_INFORMATION_PAGE_BYTES :
-//         supported_size(ctx->stream_offset);
-// }
-// 
-// static as608_progress_t accept_stream(as608_t *ctx, const as608_transaction_frame_t *frame)
-// {
-//     const size_t length = frame->length;
-//     if ((frame->kind != AS608_PACKET_DATA &&
-//          frame->kind != AS608_PACKET_END_DATA) ||
-//         length == 0U || length > ctx->stream_capacity - ctx->stream_offset) {
-//         return quarantine(ctx, AS608_STATUS_UNEXPECTED_REPLY);
-//     }
-//     (void)memcpy(ctx->stream_data + ctx->stream_offset, frame->data, length);
-//     ctx->stream_offset += length;
-//     if (frame->kind != AS608_PACKET_END_DATA) {
-//         as608_transaction_receive(&ctx->transaction, ctx->stream_capacity - ctx->stream_offset);
-//         return AS608_PENDING;
-//     }
-//     if (!stream_size_valid(ctx)) return quarantine(ctx, AS608_STATUS_UNEXPECTED_REPLY);
-//     if (ctx->stream_length != NULL) *ctx->stream_length = ctx->stream_offset;
-//     return finish(ctx, AS608_ACK_OK);
-// }
-// 
 // static size_t expected_ack(const as608_t *ctx)
 // {
 //     switch (ctx->step) {
@@ -1054,7 +1066,7 @@ as608_progress_t as608_process(as608_t *ctx) {
 // 
 // static as608_progress_t verified_packet(as608_t *ctx, const as608_transaction_frame_t *frame)
 // {
-//     if (is_stream(ctx)) return accept_stream(ctx, frame);
+//     if (is_stream(ctx)) return accept_stream(ctx);
 //     if (!ack_valid(ctx, frame)) return quarantine(ctx, AS608_STATUS_UNEXPECTED_REPLY);
 //     if (frame->data[0] != AS608_ACK_OK) return finish(ctx, frame->data[0]);
 //     return success_ack(ctx, frame);
