@@ -234,8 +234,8 @@ as608_status_t as608_init(as608_t *ctx, const as608_config_t *config);
  * @post A valid terminal ACK sets DONE and stores its raw confirmation
  * code. A transport/protocol fault during BUSY sets DESYNCHRONIZED and
  * records the host error; a non-BUSY context is left unchanged.
- * @note At rebuild stage 08, simple ACK, system-parameter ACK and
- * 16-bit result ACK phases are active.
+ * @note At rebuild stage 09, simple, system-parameter, 16-bit result
+ * and index-table ACK phases are active.
  * @see as608_get_result
  * @see as608_confirm_reset
  */
@@ -425,12 +425,44 @@ as608_status_t as608_read_parameters_start(as608_t *ctx, as608_parameters_t *out
  */
 as608_status_t as608_get_template_count_start(as608_t *ctx, uint16_t *count);
 
-/* Incremental rebuild: APIs 01–08 are defined.
+/**
+ * @brief Start reading one template index-table page (PS_ReadIndexTable, 0x1F).
+ *
+ * @details Each page contains 32 bytes (256 occupancy bits). Page n
+ * represents template slots 256*n through 256*n+255, for n in [0, 3].
+ * A set bit denotes an occupied slot; a cleared bit denotes an unoccupied
+ * slot. The bitmap is returned verbatim; the manual does not establish
+ * within-byte bit ordering. Slots beyond the actual database capacity
+ * must not be treated as available storage.
+ *
+ * @param[in,out] ctx Initialized caller-owned device context.
+ * @param[in] index_page Index-table page, 0 through 3 inclusive.
+ * @param[out] bitmap Writable caller-owned byte buffer.
+ * @param[in] capacity Available bytes in bitmap; at least 32 required.
+ * @retval AS608_STATUS_OK Job admitted; bitmap not yet available.
+ * @retval AS608_STATUS_INVALID_ARG Null context or bitmap, page out of
+ * range, or insufficient capacity.
+ * @retval AS608_STATUS_NOT_INITIALIZED Context is not initialized.
+ * @retval AS608_STATUS_BUSY Another job owns the context.
+ * @retval AS608_STATUS_RECOVERY_REQUIRED Link is quarantined.
+ * @pre Serialize calls on ctx. Keep bitmap valid and separate from
+ * driver storage until the job terminates or is aborted.
+ * @post On successful admission, state is BUSY. Exactly 32 bytes are
+ * written only after a complete checksum-verified ACK_OK with a 33-byte
+ * payload. Extra buffer bytes remain unchanged. On rejection, negative
+ * ACK, timeout, protocol error or abort, bitmap remains unchanged.
+ * @note The AS60x V1.0 manual marks this command reserved. Host protocol
+ * support does not imply that a particular sensor firmware supports it.
+ * @see as608_process
+ * @see as608_get_result
+ * @see AS60x Communication Manual V1.0, printed pages 27–28.
+ */
+as608_status_t as608_read_index_table_start(as608_t *ctx, uint8_t index_page, uint8_t *bitmap, size_t capacity);
+
+/* Incremental rebuild: APIs 01–09 are defined.
  * The following API declarations remain contracts until restored.
  * See FEATURES.md.
  */
-as608_status_t as608_read_index_table_start(as608_t *ctx, uint8_t index_page,
-                                         uint8_t *bitmap, size_t capacity);
 as608_status_t as608_read_information_page_start(as608_t *ctx, uint8_t *data,
                                                size_t capacity);
 as608_status_t as608_capture_image_start(as608_t *ctx);

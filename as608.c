@@ -11,7 +11,8 @@
 enum as608_command {
     CMD_READ_PARAMS = 0x0F,
     CMD_VERIFY_PASSWORD = 0x13,
-    CMD_COUNT = 0x1D
+    CMD_COUNT = 0x1D,
+    CMD_READ_INDEX = 0x1F
 };
 
 enum as608_step {
@@ -362,6 +363,47 @@ as608_status_t as608_get_template_count_start(as608_t *ctx, uint16_t *count) {
  * ========================================================================= */
 
 /* =========================================================================
+ * API 09: as608_read_index_table_start
+ * =========================================================================
+ * PS_ReadIndexTable (0x1F), AS60x Communication Manual V1.0, pp. 27–28.
+ * Successful ACK: confirmation byte followed by a 32-byte bitmap.
+ * Firmware support is not guaranteed; the manual marks this command reserved.
+ */
+
+static as608_progress_t accept_index_ack(as608_t *ctx) {
+    const as608_transaction_frame_t frame = as608_transaction_received(&ctx->transaction);
+
+    if ((frame.kind != AS608_PACKET_ACK) || ((frame.length != 1U) && (frame.length != 33U))) {
+        return quarantine(ctx, AS608_STATUS_UNEXPECTED_REPLY);
+    }
+
+    if (frame.data[0] != AS608_ACK_OK) {
+        return finish(ctx, frame.data[0]);
+    }
+
+    if ((frame.length != 33U) || !ctx->reply_output) {
+        return quarantine(ctx, AS608_STATUS_UNEXPECTED_REPLY);
+    }
+
+    (void)memcpy(ctx->reply_output, frame.data + 1U, 32U);
+    return finish(ctx, AS608_ACK_OK);
+}
+
+as608_status_t as608_read_index_table_start(as608_t *ctx, uint8_t index_page, uint8_t *bitmap, size_t capacity) {
+    if ((index_page > 3U) || (capacity < 32U)) {
+        return AS608_STATUS_INVALID_ARG;
+    }
+
+    const command_t command = {{CMD_READ_INDEX, index_page}, 2U, STEP_INDEX_ACK};
+
+    return reply_start(ctx, &command, bitmap);
+}
+
+/* =========================================================================
+ * END API 09
+ * ========================================================================= */
+
+/* =========================================================================
  * API 02: as608_process
  * =========================================================================
  * Keep the process dispatcher after the active command API sections so
@@ -406,6 +448,10 @@ as608_progress_t as608_process(as608_t *ctx) {
             limit = 3U;
             break;
         }
+        case STEP_INDEX_ACK: {
+            limit = 33U;
+            break;
+        }
         default: {
             return quarantine(ctx, AS608_STATUS_UNEXPECTED_REPLY);
         }
@@ -433,6 +479,9 @@ as608_progress_t as608_process(as608_t *ctx) {
                 }
                 case STEP_U16_ACK: {
                     return accept_u16_ack(ctx);
+                }
+                case STEP_INDEX_ACK: {
+                    return accept_index_ack(ctx);
                 }
                 default: {
                     return quarantine(ctx, AS608_STATUS_UNEXPECTED_REPLY);
@@ -470,7 +519,6 @@ as608_progress_t as608_process(as608_t *ctx) {
 //     CMD_LOAD_CHAR = 0x07, CMD_UP_CHAR = 0x08, CMD_DOWN_CHAR = 0x09,
 //     CMD_DELETE_CHAR = 0x0C, CMD_EMPTY = 0x0D,
 //     CMD_READ_INFO = 0x16,
-//     CMD_READ_INDEX = 0x1F
 // 
 // static bool valid_range(uint16_t start, uint16_t count)
 // {
@@ -498,14 +546,6 @@ as608_progress_t as608_process(as608_t *ctx) {
 // static as608_status_t simple_start(as608_t *ctx, uint8_t code)
 // {
 //     return launch(ctx, &(const command_t){{code}, 1U, STEP_SIMPLE_ACK});
-// }
-// 
-// as608_status_t as608_read_index_table_start(as608_t *ctx, uint8_t index_page,
-//                                          uint8_t *bitmap, size_t capacity)
-// {
-//     if (index_page > 3U || capacity < 32U) return AS608_STATUS_INVALID_ARG;
-//     const command_t command = {{CMD_READ_INDEX, index_page}, 2U, STEP_INDEX_ACK};
-//     return reply_start(ctx, &command, bitmap);
 // }
 // 
 // static void stream_setup(as608_t *ctx, as608_template_buffer_t output)
