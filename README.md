@@ -6,11 +6,12 @@ physical sensor. Historical hardware validation: two AS608_QCCF modules on
 STM32F103C8T6, USART1/USART2, 57,600 baud, 8N2; successful 768-byte template
 transfer. The unified non-blocking port still needs hardware validation.
 
-## Incremental API rebuild — active stage 09
+## Incremental API rebuild — active stage 10
 
-The five lifecycle APIs and four command APIs (0x13, 0x0F, 0x1D, 0x1F)
+The five lifecycle APIs and five command APIs (0x13, 0x0F, 0x1D, 0x1F, 0x16)
 are currently compiled from as608.c. Process supports simple,
-system-parameter, 16-bit result and index-table ACK phases. The previous implementation is preserved as line
+system-parameter, 16-bit result and index-table ACK phases, plus the
+512-byte information-page stream. The previous implementation is preserved as line
 comments below the active sections, excluding migrated definitions. Each subsequent
 API will be restored in header order, with its required static helpers
 above it and explicit section boundaries. The process dispatcher (API 02)
@@ -23,7 +24,7 @@ This is intentionally an incomplete, non-deployable command layer:
 the other declarations in as608.h cannot currently be linked. The
 command/async regression sources are retained but not built until their
 required APIs are restored. CI still builds the independent packet and
-transaction tests and the API 01–09 tests. Previous command examples and
+transaction tests and the API 01–10 tests. Previous command examples and
 coverage below describe the historical baseline, not this active stage.
 
 ## Flat project structure
@@ -45,6 +46,7 @@ AS608_lib/
 ├── test_as608_read_parameters.c  Active API 07 parameter tests
 ├── test_as608_get_template_count.c Active API 08 count tests
 ├── test_as608_read_index_table.c Active API 09 bitmap tests
+├── test_as608_read_information_page.c Active API 10 stream tests
 ├── test_as608_transaction.c      Independent transport tests
 ├── test_as608_packet.c           Packet tests
 ├── test_as608_commands.c         Full command and template regression tests
@@ -206,6 +208,8 @@ cc -std=c11 -Wall -Wextra -Werror -pedantic -I. as608_packet.c as608_transaction
 ./build/test_get_template_count
 cc -std=c11 -Wall -Wextra -Werror -pedantic -I. as608_packet.c as608_transaction.c as608.c test_as608_read_index_table.c -o build/test_read_index_table
 ./build/test_read_index_table
+cc -std=c11 -Wall -Wextra -Werror -pedantic -I. as608_packet.c as608_transaction.c as608.c test_as608_read_information_page.c -o build/test_read_information_page
+./build/test_read_information_page
 # Full command/async regression tests are temporarily inactive.
 ```
 

@@ -11,6 +11,7 @@
 enum as608_command {
     CMD_READ_PARAMS = 0x0F,
     CMD_VERIFY_PASSWORD = 0x13,
+    CMD_READ_INFO = 0x16,
     CMD_COUNT = 0x1D,
     CMD_READ_INDEX = 0x1F
 };
@@ -404,6 +405,85 @@ as608_status_t as608_read_index_table_start(as608_t *ctx, uint8_t index_page, ui
  * ========================================================================= */
 
 /* =========================================================================
+ * API 10: as608_read_information_page_start
+ * =========================================================================
+ * PS_ReadINFpage (0x16), AS60x Communication Manual V1.0, p. 23.
+ * ACK_OK is followed by a 512-byte data stream.
+ */
+
+static void stream_setup(as608_t *ctx, as608_template_buffer_t output) {
+    ctx->stream_data = output.data;
+    ctx->stream_capacity = output.capacity;
+    ctx->stream_offset = 0U;
+}
+
+static as608_progress_t accept_info_ack(as608_t *ctx) {
+    const as608_transaction_frame_t frame = as608_transaction_received(&ctx->transaction);
+
+    if ((frame.kind != AS608_PACKET_ACK) || (frame.length != 1U)) {
+        return quarantine(ctx, AS608_STATUS_UNEXPECTED_REPLY);
+    }
+
+    if (frame.data[0] != AS608_ACK_OK) {
+        return finish(ctx, frame.data[0]);
+    }
+
+    ctx->step = STEP_INFO_DATA;
+    as608_transaction_receive(&ctx->transaction, AS608_INFORMATION_PAGE_BYTES);
+    return AS608_PENDING;
+}
+
+static as608_progress_t accept_info_data(as608_t *ctx) {
+    const as608_transaction_frame_t frame = as608_transaction_received(&ctx->transaction);
+
+    if (!ctx->stream_data || (ctx->stream_offset >= AS608_INFORMATION_PAGE_BYTES) ||
+        (ctx->stream_capacity != AS608_INFORMATION_PAGE_BYTES)) {
+        return quarantine(ctx, AS608_STATUS_UNEXPECTED_REPLY);
+    }
+
+    const size_t remaining = ctx->stream_capacity - ctx->stream_offset;
+
+    if ((frame.kind != AS608_PACKET_DATA && frame.kind != AS608_PACKET_END_DATA) ||
+        (frame.length == 0U) || (frame.length > remaining)) {
+        return quarantine(ctx, AS608_STATUS_UNEXPECTED_REPLY);
+    }
+
+    if ((frame.kind == AS608_PACKET_END_DATA) != (frame.length == remaining)) {
+        return quarantine(ctx, AS608_STATUS_UNEXPECTED_REPLY);
+    }
+
+    (void)memcpy(ctx->stream_data + ctx->stream_offset, frame.data, frame.length);
+    ctx->stream_offset += frame.length;
+
+    if (frame.kind == AS608_PACKET_END_DATA) {
+        return finish(ctx, AS608_ACK_OK);
+    }
+
+    as608_transaction_receive(&ctx->transaction, ctx->stream_capacity - ctx->stream_offset);
+    return AS608_PENDING;
+}
+
+as608_status_t as608_read_information_page_start(as608_t *ctx, uint8_t *data, size_t capacity) {
+    if (!data || (capacity < AS608_INFORMATION_PAGE_BYTES)) {
+        return AS608_STATUS_INVALID_ARG;
+    }
+
+    const command_t command = {{CMD_READ_INFO}, 1U, STEP_INFO_ACK};
+    const as608_status_t status = launch(ctx, &command);
+
+    if (status == AS608_STATUS_OK) {
+        const as608_template_buffer_t output = {data, AS608_INFORMATION_PAGE_BYTES, 0U};
+        stream_setup(ctx, output);
+    }
+
+    return status;
+}
+
+/* =========================================================================
+ * END API 10
+ * ========================================================================= */
+
+/* =========================================================================
  * API 02: as608_process
  * =========================================================================
  * Keep the process dispatcher after the active command API sections so
@@ -436,7 +516,8 @@ as608_progress_t as608_process(as608_t *ctx) {
     size_t limit;
 
     switch (ctx->step) {
-        case STEP_SIMPLE_ACK: {
+        case STEP_SIMPLE_ACK:
+        case STEP_INFO_ACK: {
             limit = 1U;
             break;
         }
@@ -452,6 +533,10 @@ as608_progress_t as608_process(as608_t *ctx) {
             limit = 33U;
             break;
         }
+        case STEP_INFO_DATA: {
+            limit = 0U; /* Receive is armed by the preceding ACK or DATA handler. */
+            break;
+        }
         default: {
             return quarantine(ctx, AS608_STATUS_UNEXPECTED_REPLY);
         }
@@ -465,6 +550,10 @@ as608_progress_t as608_process(as608_t *ctx) {
         }
 
         case AS608_TXN_SENT: {
+            if (ctx->step == STEP_INFO_DATA) {
+                return quarantine(ctx, AS608_STATUS_UNEXPECTED_REPLY);
+            }
+
             as608_transaction_receive(&ctx->transaction, limit);
             return AS608_PENDING;
         }
@@ -482,6 +571,12 @@ as608_progress_t as608_process(as608_t *ctx) {
                 }
                 case STEP_INDEX_ACK: {
                     return accept_index_ack(ctx);
+                }
+                case STEP_INFO_ACK: {
+                    return accept_info_ack(ctx);
+                }
+                case STEP_INFO_DATA: {
+                    return accept_info_data(ctx);
                 }
                 default: {
                     return quarantine(ctx, AS608_STATUS_UNEXPECTED_REPLY);
@@ -518,7 +613,6 @@ as608_progress_t as608_process(as608_t *ctx) {
 //     CMD_SEARCH = 0x04, CMD_REG_MODEL = 0x05, CMD_STORE_CHAR = 0x06,
 //     CMD_LOAD_CHAR = 0x07, CMD_UP_CHAR = 0x08, CMD_DOWN_CHAR = 0x09,
 //     CMD_DELETE_CHAR = 0x0C, CMD_EMPTY = 0x0D,
-//     CMD_READ_INFO = 0x16,
 // 
 // static bool valid_range(uint16_t start, uint16_t count)
 // {
@@ -546,28 +640,6 @@ as608_progress_t as608_process(as608_t *ctx) {
 // static as608_status_t simple_start(as608_t *ctx, uint8_t code)
 // {
 //     return launch(ctx, &(const command_t){{code}, 1U, STEP_SIMPLE_ACK});
-// }
-// 
-// static void stream_setup(as608_t *ctx, as608_template_buffer_t output)
-// {
-//     ctx->stream_data = output.data;
-//     ctx->stream_capacity = output.capacity;
-//     ctx->stream_offset = 0U;
-// }
-// 
-// as608_status_t as608_read_information_page_start(as608_t *ctx, uint8_t *data,
-//                                                size_t capacity)
-// {
-//     if (data == NULL || capacity < AS608_INFORMATION_PAGE_BYTES) {
-//         return AS608_STATUS_INVALID_ARG;
-//     }
-//     const command_t command = {{CMD_READ_INFO}, 1U, STEP_INFO_ACK};
-//     const as608_status_t status = launch(ctx, &command);
-//     if (status == AS608_STATUS_OK) {
-//         const as608_template_buffer_t output = {data, AS608_INFORMATION_PAGE_BYTES, 0U};
-//         stream_setup(ctx, output);
-//     }
-//     return status;
 // }
 // 
 // as608_status_t as608_capture_image_start(as608_t *ctx)

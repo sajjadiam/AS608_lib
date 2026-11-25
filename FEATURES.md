@@ -21,10 +21,11 @@ This checklist tracks the host library against the Synochip AS60x Communication 
 - [x] API 07: `as608_read_parameters_start()` — PS_ReadSysPara (0x0F), decoded 16-byte parameter data and dedicated tests.
 - [x] API 08: `as608_get_template_count_start()` — PS_ValidTempleteNum (0x1D), decoded 16-bit valid-template count and dedicated tests.
 - [x] API 09: `as608_read_index_table_start()` — PS_ReadIndexTable (0x1F), raw 32-byte bitmap and dedicated tests; firmware support unverified.
-- [ ] API 10: `as608_read_information_page_start()`.
+- [x] API 10: `as608_read_information_page_start()` — PS_ReadINFpage (0x16), exact 512-byte stream and dedicated tests.
+- [ ] API 11: `as608_capture_image_start()`.
 - [ ] Remaining command APIs, restored individually in header order.
 
-Active wire-command coverage: **4/31** (PS_VfyPwd 0x13, PS_ReadSysPara 0x0F, PS_ValidTempleteNum 0x1D, PS_ReadIndexTable 0x1F).
+Active wire-command coverage: **5/31** (PS_VfyPwd 0x13, PS_ReadSysPara 0x0F, PS_ValidTempleteNum 0x1D, PS_ReadIndexTable 0x1F, PS_ReadINFpage 0x16).
 The 16/31 command coverage and checked items below describe the preserved
 pre-rebuild baseline (commit 53425e4), not current linkability except for
 APIs explicitly restored above.

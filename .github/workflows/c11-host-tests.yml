@@ -43,3 +43,5 @@ jobs:
           ./build/test_get_template_count
           ${{ matrix.compiler }} -std=c11 -Wall -Wextra -Werror -pedantic -I. as608_packet.c as608_transaction.c as608.c test_as608_read_index_table.c -o build/test_read_index_table
           ./build/test_read_index_table
+          ${{ matrix.compiler }} -std=c11 -Wall -Wextra -Werror -pedantic -I. as608_packet.c as608_transaction.c as608.c test_as608_read_information_page.c -o build/test_read_information_page
+          ./build/test_read_information_page

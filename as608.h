@@ -234,8 +234,8 @@ as608_status_t as608_init(as608_t *ctx, const as608_config_t *config);
  * @post A valid terminal ACK sets DONE and stores its raw confirmation
  * code. A transport/protocol fault during BUSY sets DESYNCHRONIZED and
  * records the host error; a non-BUSY context is left unchanged.
- * @note At rebuild stage 09, simple, system-parameter, 16-bit result
- * and index-table ACK phases are active.
+ * @note At rebuild stage 10, simple, system-parameter, 16-bit result,
+ * index-table ACK and information-page stream phases are active.
  * @see as608_get_result
  * @see as608_confirm_reset
  */
@@ -459,12 +459,42 @@ as608_status_t as608_get_template_count_start(as608_t *ctx, uint16_t *count);
  */
 as608_status_t as608_read_index_table_start(as608_t *ctx, uint8_t index_page, uint8_t *bitmap, size_t capacity);
 
-/* Incremental rebuild: APIs 01–09 are defined.
+/**
+ * @brief Start reading the 512-byte flash information page (PS_ReadINFpage, 0x16).
+ *
+ * @details Sends a command without arguments. A validated ACK_OK starts
+ * a sequence of checksum-verified DATA packets ending in END_DATA.
+ * Completion requires exactly AS608_INFORMATION_PAGE_BYTES bytes and
+ * the final packet marker. A single job deadline covers ACK and stream.
+ * Returns the page verbatim; does not interpret firmware-specific fields.
+ *
+ * @param[in,out] ctx Initialized caller-owned device context.
+ * @param[out] data Writable caller-owned byte buffer.
+ * @param[in] capacity Available bytes; at least AS608_INFORMATION_PAGE_BYTES.
+ * @retval AS608_STATUS_OK Job admitted; page not yet available.
+ * @retval AS608_STATUS_INVALID_ARG Null context or data, insufficient capacity.
+ * @retval AS608_STATUS_NOT_INITIALIZED Context is not initialized.
+ * @retval AS608_STATUS_BUSY Another job owns the context.
+ * @retval AS608_STATUS_RECOVERY_REQUIRED Link is quarantined.
+ * @pre Serialize calls on ctx. Keep data valid and separate from driver
+ * storage until the job terminates or is aborted.
+ * @post On successful admission, state is BUSY. On successful terminal
+ * result, exactly 512 bytes have been written. Extra buffer bytes are
+ * untouched. Admission rejection and negative initial ACK leave data
+ * unchanged. Later faults or abort may leave previously verified fragments
+ * in data; do not consume a partial page as a successful result.
+ * @note Check both result fields after polling as608_process(). No retries,
+ * additional allocation, or whole-page staging buffer is used.
+ * @see as608_process
+ * @see as608_get_result
+ * @see AS60x Communication Manual V1.0, printed page 23.
+ */
+as608_status_t as608_read_information_page_start(as608_t *ctx, uint8_t *data, size_t capacity);
+
+/* Incremental rebuild: APIs 01–10 are defined.
  * The following API declarations remain contracts until restored.
  * See FEATURES.md.
  */
-as608_status_t as608_read_information_page_start(as608_t *ctx, uint8_t *data,
-                                               size_t capacity);
 as608_status_t as608_capture_image_start(as608_t *ctx);
 as608_status_t as608_generate_character_start(as608_t *ctx,
                                              as608_char_buffer_t buffer);
