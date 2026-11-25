@@ -491,11 +491,38 @@ as608_status_t as608_read_index_table_start(as608_t *ctx, uint8_t index_page, ui
  */
 as608_status_t as608_read_information_page_start(as608_t *ctx, uint8_t *data, size_t capacity);
 
-/* Incremental rebuild: APIs 01–10 are defined.
+/**
+ * @brief Start fingerprint image acquisition (PS_GetImage, opcode 0x01).
+ *
+ * @details Requests one sensor-side finger detection and image capture.
+ * On success, the image resides in the sensor's internal ImageBuffer;
+ * no image bytes are transferred to the host. The command expects a
+ * one-byte confirmation ACK.
+ *
+ * @param[in,out] ctx Initialized caller-owned device context.
+ * @retval AS608_STATUS_OK Job admitted; capture is not yet confirmed.
+ * @retval AS608_STATUS_INVALID_ARG Null context.
+ * @retval AS608_STATUS_NOT_INITIALIZED Context is not initialized.
+ * @retval AS608_STATUS_BUSY Another job owns the context.
+ * @retval AS608_STATUS_RECOVERY_REQUIRED Link is quarantined.
+ * @pre Calls sharing ctx must be serialized.
+ * @post On admission, state is BUSY and the job deadline starts.
+ * Rejected admission leaves the current job and result unchanged.
+ * @note After completion, AS608_STATUS_OK with AS608_ACK_OK means the
+ * sensor captured an image. AS608_ACK_NO_FINGER (0x02) and
+ * AS608_ACK_IMAGE_ERROR (0x03) are sensor results, not host faults.
+ * No automatic finger polling, retries or image upload are performed.
+ * Do not use ImageBuffer as a newly captured image after a failed capture.
+ * @see as608_process
+ * @see as608_get_result
+ * @see AS60x Communication Manual V1.0, printed page 13.
+ */
+as608_status_t as608_capture_image_start(as608_t *ctx);
+
+/* Incremental rebuild: APIs 01–11 are defined.
  * The following API declarations remain contracts until restored.
  * See FEATURES.md.
  */
-as608_status_t as608_capture_image_start(as608_t *ctx);
 as608_status_t as608_generate_character_start(as608_t *ctx,
                                              as608_char_buffer_t buffer);
 as608_status_t as608_match_buffers_start(as608_t *ctx, uint16_t *score);

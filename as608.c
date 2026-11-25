@@ -9,6 +9,7 @@
  * ========================================================================= */
 
 enum as608_command {
+    CMD_GET_IMAGE = 0x01,
     CMD_READ_PARAMS = 0x0F,
     CMD_VERIFY_PASSWORD = 0x13,
     CMD_READ_INFO = 0x16,
@@ -36,6 +37,7 @@ enum as608_step {
  * Shared job lifecycle helpers
  * ========================================================================= */
 
+/* Record a host fault and quarantine the link until external recovery. */
 static as608_progress_t quarantine(as608_t *ctx, as608_status_t status) {
     ctx->result.status = status;
     ctx->result.confirmation = 0U;
@@ -43,6 +45,7 @@ static as608_progress_t quarantine(as608_t *ctx, as608_status_t status) {
     return AS608_FAILED;
 }
 
+/* Store the raw sensor confirmation and mark the job complete. */
 static as608_progress_t finish(as608_t *ctx, uint8_t ack) {
     ctx->result.status = AS608_STATUS_OK;
     ctx->result.confirmation = ack;
@@ -185,6 +188,7 @@ typedef struct {
     uint8_t step;
 } command_t;
 
+/* Check whether the context can admit a new job. */
 static as608_status_t start_allowed(const as608_t *ctx) {
     if (!ctx) {
         return AS608_STATUS_INVALID_ARG;
@@ -207,6 +211,7 @@ static as608_status_t start_allowed(const as608_t *ctx) {
     }
 }
 
+/* Prepare the command frame and select its next processing phase. */
 static as608_status_t command_start(as608_t *ctx, const command_t *command) {
     const as608_transaction_frame_t frame = {
         AS608_PACKET_COMMAND, command->bytes, command->length
@@ -220,6 +225,7 @@ static as608_status_t command_start(as608_t *ctx, const command_t *command) {
     return status;
 }
 
+/* Admit a command, start the job deadline and enter BUSY. */
 static as608_status_t launch(as608_t *ctx, const command_t *command) {
     const as608_status_t allowed = start_allowed(ctx);
 
@@ -265,15 +271,18 @@ as608_status_t as608_verify_password_start(as608_t *ctx, uint32_t password) {
  * Successful ACK: confirmation byte followed by 16 parameter bytes.
  */
 
+/* Decode two big-endian bytes into a uint16_t. */
 static uint16_t load_u16(const uint8_t *bytes) {
     return (uint16_t)(((uint16_t)bytes[0] << 8U) | (uint16_t)bytes[1]);
 }
 
+/* Decode four big-endian bytes into a uint32_t. */
 static uint32_t load_u32(const uint8_t *bytes) {
     return ((uint32_t)bytes[0] << 24U) | ((uint32_t)bytes[1] << 16U) |
            ((uint32_t)bytes[2] << 8U) | (uint32_t)bytes[3];
 }
 
+/* Decode the 16-byte system parameter block into the output structure. */
 static void decode_parameters(const uint8_t *data, as608_parameters_t *out) {
     out->status_register = load_u16(data);
     out->sensor_type = load_u16(data + 2U);
@@ -284,6 +293,7 @@ static void decode_parameters(const uint8_t *data, as608_parameters_t *out) {
     out->baud_multiplier = load_u16(data + 14U);
 }
 
+/* Validate the parameter ACK and decode its successful response. */
 static as608_progress_t accept_parameters_ack(as608_t *ctx) {
     const as608_transaction_frame_t frame = as608_transaction_received(&ctx->transaction);
 
@@ -303,6 +313,7 @@ static as608_progress_t accept_parameters_ack(as608_t *ctx) {
     return finish(ctx, AS608_ACK_OK);
 }
 
+/* Launch a command and retain its caller-owned output pointer. */
 static as608_status_t reply_start(as608_t *ctx, const command_t *command, void *output) {
     if (!output) {
         return AS608_STATUS_INVALID_ARG;
@@ -334,6 +345,7 @@ as608_status_t as608_read_parameters_start(as608_t *ctx, as608_parameters_t *out
  * Successful ACK: confirmation byte followed by a 16-bit template count.
  */
 
+/* Validate an ACK and decode its 16-bit result on success. */
 static as608_progress_t accept_u16_ack(as608_t *ctx) {
     const as608_transaction_frame_t frame = as608_transaction_received(&ctx->transaction);
 
@@ -371,6 +383,7 @@ as608_status_t as608_get_template_count_start(as608_t *ctx, uint16_t *count) {
  * Firmware support is not guaranteed; the manual marks this command reserved.
  */
 
+/* Validate the index ACK and copy its 32-byte bitmap on success. */
 static as608_progress_t accept_index_ack(as608_t *ctx) {
     const as608_transaction_frame_t frame = as608_transaction_received(&ctx->transaction);
 
@@ -411,12 +424,14 @@ as608_status_t as608_read_index_table_start(as608_t *ctx, uint8_t index_page, ui
  * ACK_OK is followed by a 512-byte data stream.
  */
 
+/* Initialize the destination buffer and offset for a data stream. */
 static void stream_setup(as608_t *ctx, as608_template_buffer_t output) {
     ctx->stream_data = output.data;
     ctx->stream_capacity = output.capacity;
     ctx->stream_offset = 0U;
 }
 
+/* Validate the information-page ACK and arm the data receiver on success. */
 static as608_progress_t accept_info_ack(as608_t *ctx) {
     const as608_transaction_frame_t frame = as608_transaction_received(&ctx->transaction);
 
@@ -433,6 +448,7 @@ static as608_progress_t accept_info_ack(as608_t *ctx) {
     return AS608_PENDING;
 }
 
+/* Validate and copy a verified fragment; complete only at exactly 512 bytes. */
 static as608_progress_t accept_info_data(as608_t *ctx) {
     const as608_transaction_frame_t frame = as608_transaction_received(&ctx->transaction);
 
@@ -484,12 +500,35 @@ as608_status_t as608_read_information_page_start(as608_t *ctx, uint8_t *data, si
  * ========================================================================= */
 
 /* =========================================================================
+ * API 11: as608_capture_image_start
+ * =========================================================================
+ * PS_GetImage (0x01), AS60x Communication Manual V1.0, p. 13.
+ * Captures an image into the sensor's internal ImageBuffer.
+ */
+
+/* Launch an argument-free command expecting a one-byte ACK. */
+static as608_status_t simple_start(as608_t *ctx, uint8_t code) {
+    const command_t command = {{code}, 1U, STEP_SIMPLE_ACK};
+
+    return launch(ctx, &command);
+}
+
+as608_status_t as608_capture_image_start(as608_t *ctx) {
+    return simple_start(ctx, CMD_GET_IMAGE);
+}
+
+/* =========================================================================
+ * END API 11
+ * ========================================================================= */
+
+/* =========================================================================
  * API 02: as608_process
  * =========================================================================
  * Keep the process dispatcher after the active command API sections so
  * their static reply handlers are defined before use.
  * ========================================================================= */
 
+/* Validate a one-byte ACK and preserve its raw confirmation code. */
 static as608_progress_t accept_simple_ack(as608_t *ctx) {
     const as608_transaction_frame_t frame = as608_transaction_received(&ctx->transaction);
 
@@ -609,7 +648,7 @@ as608_progress_t as608_process(as608_t *ctx) {
  * ========================================================================= */
 
 // Remaining command opcodes; migrate into enum as608_command when needed.
-//     CMD_GET_IMAGE = 0x01, CMD_GEN_CHAR = 0x02, CMD_MATCH = 0x03,
+//     CMD_GEN_CHAR = 0x02, CMD_MATCH = 0x03,
 //     CMD_SEARCH = 0x04, CMD_REG_MODEL = 0x05, CMD_STORE_CHAR = 0x06,
 //     CMD_LOAD_CHAR = 0x07, CMD_UP_CHAR = 0x08, CMD_DOWN_CHAR = 0x09,
 //     CMD_DELETE_CHAR = 0x0C, CMD_EMPTY = 0x0D,
@@ -635,16 +674,6 @@ as608_progress_t as608_process(as608_t *ctx) {
 // {
 //     return (buffer == AS608_CHAR_BUFFER_1) ||
 //            (buffer == AS608_CHAR_BUFFER_2);
-// }
-// 
-// static as608_status_t simple_start(as608_t *ctx, uint8_t code)
-// {
-//     return launch(ctx, &(const command_t){{code}, 1U, STEP_SIMPLE_ACK});
-// }
-// 
-// as608_status_t as608_capture_image_start(as608_t *ctx)
-// {
-//     return simple_start(ctx, CMD_GET_IMAGE);
 // }
 // 
 // as608_status_t as608_generate_character_start(as608_t *ctx,
