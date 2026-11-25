@@ -552,11 +552,44 @@ as608_status_t as608_capture_image_start(as608_t *ctx);
  */
 as608_status_t as608_generate_character_start(as608_t *ctx, as608_char_buffer_t buffer);
 
-/* Incremental rebuild: APIs 01–12 are defined.
+/**
+ * @brief Start a one-to-one feature comparison (PS_Match, opcode 0x03).
+ *
+ * @details Compares the sensor's CharBuffer1 and CharBuffer2 without
+ * searching the flash database. The successful ACK contains a
+ * confirmation byte and a 16-bit big-endian match score. The raw score
+ * is sensor-specific; it is not a probability or percentage.
+ *
+ * @param[in,out] ctx Initialized caller-owned device context.
+ * @param[out] score Writable caller-owned uint16_t result.
+ * @retval AS608_STATUS_OK Job admitted; comparison not yet confirmed.
+ * @retval AS608_STATUS_INVALID_ARG Null context or score.
+ * @retval AS608_STATUS_NOT_INITIALIZED Context is not initialized.
+ * @retval AS608_STATUS_BUSY Another job owns the context.
+ * @retval AS608_STATUS_RECOVERY_REQUIRED Link is quarantined.
+ * @pre Serialize calls sharing ctx. Keep score valid and separate from
+ * driver storage until completion or abort. Both character buffers
+ * must contain valid comparable features for successful matching;
+ * the driver does not track their sensor-side validity.
+ * @post On admission, state is BUSY and the job deadline starts.
+ * Score is written only after a checksum-verified ACK_OK with a
+ * 3-byte payload. Rejection, negative ACK, timeout, protocol error
+ * and abort leave score unchanged.
+ * @note Check both terminal result fields. AS608_ACK_NO_MATCH (0x08)
+ * is a valid terminal sensor result, not a host communication fault.
+ * The score field in a negative ACK is deliberately ignored, even
+ * when present. AS608_ACK_PACKET_ERROR (0x01) is also a sensor result.
+ * @see as608_generate_character_start
+ * @see as608_process
+ * @see as608_get_result
+ * @see AS60x Communication Manual V1.0, printed page 14.
+ */
+as608_status_t as608_match_buffers_start(as608_t *ctx, uint16_t *score);
+
+/* Incremental rebuild: APIs 01–13 are defined.
  * The following API declarations remain contracts until restored.
  * See FEATURES.md.
  */
-as608_status_t as608_match_buffers_start(as608_t *ctx, uint16_t *score);
 as608_status_t as608_create_model_start(as608_t *ctx);
 as608_status_t as608_search_start(as608_t *ctx, as608_search_t *search);
 as608_status_t as608_load_template_start(as608_t *ctx, as608_char_buffer_t buffer,
