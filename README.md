@@ -6,11 +6,11 @@ physical sensor. Historical hardware validation: two AS608_QCCF modules on
 STM32F103C8T6, USART1/USART2, 57,600 baud, 8N2; successful 768-byte template
 transfer. The unified non-blocking port still needs hardware validation.
 
-## Incremental API rebuild — active stage 06
+## Incremental API rebuild — active stage 07
 
-The five lifecycle APIs and the first command API,
-`as608_verify_password_start()` (PS_VfyPwd, 0x13), are currently compiled
-from as608.c. Process supports the simple Command → ACK phase. The previous implementation is preserved as line
+The five lifecycle APIs and two command APIs, `as608_verify_password_start()`
+(0x13) and `as608_read_parameters_start()` (0x0F), are currently compiled
+from as608.c. Process supports simple ACK and system-parameter ACK phases. The previous implementation is preserved as line
 comments below the active sections, excluding migrated definitions. Each subsequent
 API will be restored in header order, with its required static helpers
 above it and explicit section boundaries. Shared helpers remain unique.
@@ -20,7 +20,7 @@ This is intentionally an incomplete, non-deployable command layer:
 the other declarations in as608.h cannot currently be linked. The
 command/async regression sources are retained but not built until their
 required APIs are restored. CI still builds the independent packet and
-transaction tests and the API 01–06 tests. Previous command examples and
+transaction tests and the API 01–07 tests. Previous command examples and
 coverage below describe the historical baseline, not this active stage.
 
 ## Flat project structure
@@ -39,6 +39,7 @@ AS608_lib/
 ├── test_as608_abort.c            Active API 04 abort tests
 ├── test_as608_confirm_reset.c    Active API 05 recovery tests
 ├── test_as608_verify_password.c  Active API 06 password tests
+├── test_as608_read_parameters.c  Active API 07 parameter tests
 ├── test_as608_transaction.c      Independent transport tests
 ├── test_as608_packet.c           Packet tests
 ├── test_as608_commands.c         Full command and template regression tests
@@ -194,6 +195,8 @@ cc -std=c11 -Wall -Wextra -Werror -pedantic -I. as608_packet.c as608_transaction
 ./build/test_confirm_reset
 cc -std=c11 -Wall -Wextra -Werror -pedantic -I. as608_packet.c as608_transaction.c as608.c test_as608_verify_password.c -o build/test_verify_password
 ./build/test_verify_password
+cc -std=c11 -Wall -Wextra -Werror -pedantic -I. as608_packet.c as608_transaction.c as608.c test_as608_read_parameters.c -o build/test_read_parameters
+./build/test_read_parameters
 # Full command/async regression tests are temporarily inactive.
 ```
 

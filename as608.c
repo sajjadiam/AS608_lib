@@ -48,8 +48,8 @@ as608_status_t as608_init(as608_t *ctx, const as608_config_t *config) {
  * API 02: as608_process
  * =========================================================================
  * Shared command-state helpers live here, above their first active user.
- * Only the simple ACK path is active in this rebuild stage. Additional
- * command phases will be restored with the corresponding start APIs.
+ * Simple ACK and system-parameter ACK paths are active. Command-specific
+ * reply handlers are defined in their own API sections.
  */
 
 enum {
@@ -92,6 +92,9 @@ static as608_progress_t accept_simple_ack(as608_t *ctx) {
     return finish(ctx, frame.data[0]);
 }
 
+/* API 07 reply handler; defined with its command-specific helpers below. */
+static as608_progress_t accept_parameters_ack(as608_t *ctx);
+
 as608_progress_t as608_process(as608_t *ctx) {
     if (!ctx) {
         return AS608_FAILED;
@@ -105,7 +108,7 @@ as608_progress_t as608_process(as608_t *ctx) {
         return AS608_FAILED;
     }
 
-    if (ctx->step != STEP_SIMPLE_ACK) {
+    if ((ctx->step != STEP_SIMPLE_ACK) && (ctx->step != STEP_READ_PARAMS_ACK)) {
         return quarantine(ctx, AS608_STATUS_UNEXPECTED_REPLY);
     }
 
@@ -117,11 +120,16 @@ as608_progress_t as608_process(as608_t *ctx) {
         }
 
         case AS608_TXN_SENT: {
-            as608_transaction_receive(&ctx->transaction, 1U);
+            const size_t limit = (ctx->step == STEP_READ_PARAMS_ACK) ? 17U : 1U;
+            as608_transaction_receive(&ctx->transaction, limit);
             return AS608_PENDING;
         }
 
         case AS608_TXN_RECEIVED: {
+            if (ctx->step == STEP_READ_PARAMS_ACK) {
+                return accept_parameters_ack(ctx);
+            }
+
             return accept_simple_ack(ctx);
         }
 
@@ -312,6 +320,79 @@ as608_status_t as608_verify_password_start(as608_t *ctx, uint32_t password) {
  * ========================================================================= */
 
 /* =========================================================================
+ * API 07: as608_read_parameters_start
+ * =========================================================================
+ * PS_ReadSysPara (0x0F), AS60x Communication Manual V1.0, pp. 19–20.
+ * Successful ACK: confirmation byte followed by 16 parameter bytes.
+ */
+
+enum {
+    CMD_READ_PARAMS = 0x0F
+};
+
+static uint16_t load_u16(const uint8_t *bytes) {
+    return (uint16_t)(((uint16_t)bytes[0] << 8U) | (uint16_t)bytes[1]);
+}
+
+static uint32_t load_u32(const uint8_t *bytes) {
+    return ((uint32_t)bytes[0] << 24U) | ((uint32_t)bytes[1] << 16U) |
+           ((uint32_t)bytes[2] << 8U) | (uint32_t)bytes[3];
+}
+
+static void decode_parameters(const uint8_t *data, as608_parameters_t *out) {
+    out->status_register = load_u16(data);
+    out->sensor_type = load_u16(data + 2U);
+    out->template_capacity = load_u16(data + 4U);
+    out->security_level = load_u16(data + 6U);
+    out->device_address = load_u32(data + 8U);
+    out->packet_size_code = load_u16(data + 12U);
+    out->baud_multiplier = load_u16(data + 14U);
+}
+
+static as608_progress_t accept_parameters_ack(as608_t *ctx) {
+    const as608_transaction_frame_t frame = as608_transaction_received(&ctx->transaction);
+
+    if ((frame.kind != AS608_PACKET_ACK) || ((frame.length != 1U) && (frame.length != 17U))) {
+        return quarantine(ctx, AS608_STATUS_UNEXPECTED_REPLY);
+    }
+
+    if (frame.data[0] != AS608_ACK_OK) {
+        return finish(ctx, frame.data[0]);
+    }
+
+    if ((frame.length != 17U) || !ctx->reply_output) {
+        return quarantine(ctx, AS608_STATUS_UNEXPECTED_REPLY);
+    }
+
+    decode_parameters(frame.data + 1U, ctx->reply_output);
+    return finish(ctx, AS608_ACK_OK);
+}
+
+static as608_status_t reply_start(as608_t *ctx, const command_t *command, void *output) {
+    if (!output) {
+        return AS608_STATUS_INVALID_ARG;
+    }
+
+    const as608_status_t status = launch(ctx, command);
+
+    if (status == AS608_STATUS_OK) {
+        ctx->reply_output = output;
+    }
+
+    return status;
+}
+
+as608_status_t as608_read_parameters_start(as608_t *ctx, as608_parameters_t *out) {
+    const command_t command = {{CMD_READ_PARAMS}, 1U, STEP_READ_PARAMS_ACK};
+
+    return reply_start(ctx, &command, out);
+}
+
+/* =========================================================================
+ * END API 07
+ * ========================================================================= */
+
+/* =========================================================================
  * INACTIVE REFERENCE — incremental API rebuild
  *
  * Previous implementation from commit 53425e4.
@@ -324,7 +405,7 @@ as608_status_t as608_verify_password_start(as608_t *ctx, uint32_t password) {
 //     CMD_GET_IMAGE = 0x01, CMD_GEN_CHAR = 0x02, CMD_MATCH = 0x03,
 //     CMD_SEARCH = 0x04, CMD_REG_MODEL = 0x05, CMD_STORE_CHAR = 0x06,
 //     CMD_LOAD_CHAR = 0x07, CMD_UP_CHAR = 0x08, CMD_DOWN_CHAR = 0x09,
-//     CMD_DELETE_CHAR = 0x0C, CMD_EMPTY = 0x0D, CMD_READ_PARAMS = 0x0F,
+//     CMD_DELETE_CHAR = 0x0C, CMD_EMPTY = 0x0D,
 //     CMD_READ_INFO = 0x16,
 //     CMD_COUNT = 0x1D, CMD_READ_INDEX = 0x1F
 // };
@@ -334,32 +415,10 @@ as608_status_t as608_verify_password_start(as608_t *ctx, uint32_t password) {
 //     return count != 0U && (uint32_t)start + (uint32_t)count <= UINT32_C(65536);
 // }
 // 
-// static uint16_t load_u16(const uint8_t *bytes)
-// {
-//     return (uint16_t)(((uint16_t)bytes[0] << 8U) | (uint16_t)bytes[1]);
-// }
-// 
-// static uint32_t load_u32(const uint8_t *bytes)
-// {
-//     return ((uint32_t)bytes[0] << 24U) | ((uint32_t)bytes[1] << 16U) |
-//            ((uint32_t)bytes[2] << 8U) | (uint32_t)bytes[3];
-// }
-// 
 // static void store_u16(uint8_t *bytes, uint16_t value)
 // {
 //     bytes[0] = (uint8_t)(value >> 8U);
 //     bytes[1] = (uint8_t)value;
-// }
-// 
-// static void decode_parameters(const uint8_t *ack, as608_parameters_t *out)
-// {
-//     out->status_register = load_u16(ack + 1U);
-//     out->sensor_type = load_u16(ack + 3U);
-//     out->template_capacity = load_u16(ack + 5U);
-//     out->security_level = load_u16(ack + 7U);
-//     out->device_address = load_u32(ack + 9U);
-//     out->packet_size_code = load_u16(ack + 13U);
-//     out->baud_multiplier = load_u16(ack + 15U);
 // }
 // 
 // static bool supported_size(size_t length)
@@ -377,21 +436,6 @@ as608_status_t as608_verify_password_start(as608_t *ctx, uint32_t password) {
 // static as608_status_t simple_start(as608_t *ctx, uint8_t code)
 // {
 //     return launch(ctx, &(const command_t){{code}, 1U, STEP_SIMPLE_ACK});
-// }
-// 
-// static as608_status_t reply_start(as608_t *ctx, const command_t *command,
-//                                   void *output)
-// {
-//     if (output == NULL) return AS608_STATUS_INVALID_ARG;
-//     const as608_status_t status = launch(ctx, command);
-//     if (status == AS608_STATUS_OK) ctx->reply_output = output;
-//     return status;
-// }
-// 
-// as608_status_t as608_read_parameters_start(as608_t *ctx, as608_parameters_t *out)
-// {
-//     const command_t command = {{CMD_READ_PARAMS}, 1U, STEP_READ_PARAMS_ACK};
-//     return reply_start(ctx, &command, out);
 // }
 // 
 // as608_status_t as608_get_template_count_start(as608_t *ctx, uint16_t *count)
