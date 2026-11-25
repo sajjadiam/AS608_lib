@@ -222,6 +222,96 @@ as608_status_t as608_confirm_reset(as608_t *ctx) {
  * ========================================================================= */
 
 /* =========================================================================
+ * API 06: as608_verify_password_start
+ * =========================================================================
+ * PS_VfyPwd (0x13), AS60x Communication Manual V1.0, p. 22.
+ * Command admission and launch helpers are shared by later start APIs.
+ */
+
+enum {
+    CMD_VERIFY_PASSWORD = 0x13
+};
+
+typedef struct {
+    uint8_t bytes[6U];
+    size_t length;
+    uint8_t step;
+} command_t;
+
+static as608_status_t start_allowed(const as608_t *ctx) {
+    if (!ctx) {
+        return AS608_STATUS_INVALID_ARG;
+    }
+
+    switch (ctx->state) {
+        case AS608_STATE_IDLE:
+        case AS608_STATE_DONE: {
+            return AS608_STATUS_OK;
+        }
+        case AS608_STATE_BUSY: {
+            return AS608_STATUS_BUSY;
+        }
+        case AS608_STATE_DESYNCHRONIZED: {
+            return AS608_STATUS_RECOVERY_REQUIRED;
+        }
+        default: {
+            return AS608_STATUS_NOT_INITIALIZED;
+        }
+    }
+}
+
+static as608_status_t command_start(as608_t *ctx, const command_t *command) {
+    const as608_transaction_frame_t frame = {
+        AS608_PACKET_COMMAND, command->bytes, command->length
+    };
+    const as608_status_t status = as608_transaction_send(&ctx->transaction, &frame);
+
+    if (status == AS608_STATUS_OK) {
+        ctx->step = command->step;
+    }
+
+    return status;
+}
+
+static as608_status_t launch(as608_t *ctx, const command_t *command) {
+    const as608_status_t allowed = start_allowed(ctx);
+
+    if (allowed != AS608_STATUS_OK) {
+        return allowed;
+    }
+
+    const as608_status_t status = command_start(ctx, command);
+
+    if (status != AS608_STATUS_OK) {
+        return status;
+    }
+
+    ctx->result = (as608_result_t){AS608_STATUS_NOT_INITIALIZED, 0U};
+    ctx->reply_output = NULL;
+    ctx->stream_length = NULL;
+    as608_transaction_begin(&ctx->transaction);
+    ctx->state = AS608_STATE_BUSY;
+
+    return AS608_STATUS_OK;
+}
+
+as608_status_t as608_verify_password_start(as608_t *ctx, uint32_t password) {
+    const command_t command = {{
+        CMD_VERIFY_PASSWORD,
+        (uint8_t)(password >> 24U),
+        (uint8_t)(password >> 16U),
+        (uint8_t)(password >> 8U),
+        (uint8_t)password
+    }, 5U, STEP_SIMPLE_ACK};
+
+    return launch(ctx, &command);
+}
+
+/* =========================================================================
+ * END API 06
+ * ========================================================================= */
+
+/* =========================================================================
  * INACTIVE REFERENCE — incremental API rebuild
  *
  * Previous implementation from commit 53425e4.
@@ -235,15 +325,9 @@ as608_status_t as608_confirm_reset(as608_t *ctx) {
 //     CMD_SEARCH = 0x04, CMD_REG_MODEL = 0x05, CMD_STORE_CHAR = 0x06,
 //     CMD_LOAD_CHAR = 0x07, CMD_UP_CHAR = 0x08, CMD_DOWN_CHAR = 0x09,
 //     CMD_DELETE_CHAR = 0x0C, CMD_EMPTY = 0x0D, CMD_READ_PARAMS = 0x0F,
-//     CMD_VERIFY_PASSWORD = 0x13, CMD_READ_INFO = 0x16,
+//     CMD_READ_INFO = 0x16,
 //     CMD_COUNT = 0x1D, CMD_READ_INDEX = 0x1F
 // };
-// 
-// typedef struct {
-//     uint8_t bytes[6U];
-//     size_t length;
-//     uint8_t step;
-// } command_t;
 // 
 // static bool valid_range(uint16_t start, uint16_t count)
 // {
@@ -290,41 +374,6 @@ as608_status_t as608_confirm_reset(as608_t *ctx) {
 //            (buffer == AS608_CHAR_BUFFER_2);
 // }
 // 
-// static as608_status_t command_start(as608_t *ctx, const command_t *command)
-// {
-//     const as608_transaction_frame_t frame = {AS608_PACKET_COMMAND, command->bytes, command->length};
-//     const as608_status_t status = as608_transaction_send(&ctx->transaction, &frame);
-//     if (status == AS608_STATUS_OK) ctx->step = command->step;
-//     return status;
-// }
-// 
-// static as608_status_t start_allowed(const as608_t *ctx)
-// {
-//     if (ctx == NULL) return AS608_STATUS_INVALID_ARG;
-//     switch (ctx->state) {
-//     case AS608_STATE_IDLE:
-//     case AS608_STATE_DONE: return AS608_STATUS_OK;
-//     case AS608_STATE_BUSY: return AS608_STATUS_BUSY;
-//     case AS608_STATE_DESYNCHRONIZED: return AS608_STATUS_RECOVERY_REQUIRED;
-//     default: return AS608_STATUS_NOT_INITIALIZED;
-//     }
-// }
-// 
-// static as608_status_t launch(as608_t *ctx, const command_t *command)
-// {
-//     const as608_status_t allowed = start_allowed(ctx);
-//     if (allowed != AS608_STATUS_OK) return allowed;
-//     const as608_status_t status = command_start(ctx, command);
-//     if (status != AS608_STATUS_OK) return status;
-//     ctx->result = (as608_result_t){AS608_STATUS_NOT_INITIALIZED, 0U};
-//     ctx->reply_output = NULL;
-//     ctx->stream_length = NULL;
-//     as608_transaction_begin(&ctx->transaction);
-//     ctx->state = AS608_STATE_BUSY;
-//     return AS608_STATUS_OK;
-// }
-// 
-// 
 // static as608_status_t simple_start(as608_t *ctx, uint8_t code)
 // {
 //     return launch(ctx, &(const command_t){{code}, 1U, STEP_SIMPLE_ACK});
@@ -337,15 +386,6 @@ as608_status_t as608_confirm_reset(as608_t *ctx) {
 //     const as608_status_t status = launch(ctx, command);
 //     if (status == AS608_STATUS_OK) ctx->reply_output = output;
 //     return status;
-// }
-// 
-// as608_status_t as608_verify_password_start(as608_t *ctx, uint32_t password)
-// {
-//     const command_t command = {{
-//         CMD_VERIFY_PASSWORD, (uint8_t)(password >> 24U),
-//         (uint8_t)(password >> 16U), (uint8_t)(password >> 8U), (uint8_t)password
-//     }, 5U, STEP_SIMPLE_ACK};
-//     return launch(ctx, &command);
 // }
 // 
 // as608_status_t as608_read_parameters_start(as608_t *ctx, as608_parameters_t *out)

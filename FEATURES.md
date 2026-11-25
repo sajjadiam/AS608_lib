@@ -17,12 +17,14 @@ This checklist tracks the host library against the Synochip AS60x Communication 
 - [x] API 03: `as608_get_result()` — terminal result snapshot and dedicated tests.
 - [x] API 04: `as608_abort()` — logical abort and quarantine, dedicated tests.
 - [x] API 05: `as608_confirm_reset()` — external recovery acknowledgment and dedicated tests.
-- [ ] API 06: `as608_verify_password_start()`.
+- [x] API 06: `as608_verify_password_start()` — PS_VfyPwd (0x13), active implementation and wire/lifecycle tests.
+- [ ] API 07: `as608_read_parameters_start()`.
 - [ ] Remaining command APIs, restored individually in header order.
 
-Active wire-command coverage: **0/31** until the command APIs are restored.
+Active wire-command coverage: **1/31** (PS_VfyPwd, 0x13).
 The 16/31 command coverage and checked items below describe the preserved
-pre-rebuild baseline (commit 53425e4), not currently linkable functions.
+pre-rebuild baseline (commit 53425e4), not current linkability except for
+APIs explicitly restored above.
 No historical test result is asserted for the new active stage.
 
 ## 1. Fingerprint acquisition and recognition

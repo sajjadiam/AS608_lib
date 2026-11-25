@@ -323,10 +323,7 @@ as608_status_t as608_abort(as608_t *ctx);
  */
 as608_status_t as608_confirm_reset(as608_t *ctx);
 
-/* Incremental rebuild: APIs 01–05 are defined.
- * The following API declarations remain contracts until restored.
- * See FEATURES.md.
- */
+
 
 /**
  * @brief Start functions: return admission status, never wait for a reply.
@@ -336,7 +333,43 @@ as608_status_t as608_confirm_reset(as608_t *ctx);
  * successful ACK/stream; stream bytes may be partially modified on failure.
  * Poll as608_process(), then use as608_get_result(). No automatic retries.
  */
+/**
+ * @brief Start password verification (PS_VfyPwd, opcode 0x13).
+ *
+ * @details Encodes the 32-bit password most-significant byte first and
+ * queues a COMMAND frame in the transaction context. No UART callback
+ * is invoked here; the clock is sampled once on successful admission.
+ * The sensor reply is a one-byte confirmation in a validated ACK frame.
+ * Advance the job with as608_process() and read its terminal result
+ * with as608_get_result().
+ *
+ * @param[in,out] ctx Initialized caller-owned context.
+ * @param[in] password Device handshake password; all uint32_t values
+ * are representable, including the factory-default value zero.
+ * @retval AS608_STATUS_OK Job admitted, not password verified.
+ * @retval AS608_STATUS_INVALID_ARG Null context.
+ * @retval AS608_STATUS_NOT_INITIALIZED Context is not initialized.
+ * @retval AS608_STATUS_BUSY Another job owns the context.
+ * @retval AS608_STATUS_RECOVERY_REQUIRED Link is quarantined.
+ * @pre Calls sharing the context must be serialized.
+ * @post On successful admission, state is BUSY and the original
+ * operation-wide deadline is armed. On admission rejection, the
+ * previous job/result is unchanged.
+ * @note On completion, AS608_STATUS_OK with AS608_ACK_OK means the
+ * sensor accepted the password. AS608_ACK_PASSWORD_ERROR (0x13)
+ * means rejection, not a transport failure.
+ * @warning The wire password is plaintext; do not log or expose TX
+ * buffers. Verification is not cryptographic authentication.
+ * @see as608_process
+ * @see as608_get_result
+ * @see AS60x Communication Manual V1.0, printed page 22.
+ */
 as608_status_t as608_verify_password_start(as608_t *ctx, uint32_t password);
+
+/* Incremental rebuild: APIs 01–06 are defined.
+ * The following API declarations remain contracts until restored.
+ * See FEATURES.md.
+ */
 as608_status_t as608_read_parameters_start(as608_t *ctx, as608_parameters_t *out);
 as608_status_t as608_get_template_count_start(as608_t *ctx, uint16_t *count);
 as608_status_t as608_read_index_table_start(as608_t *ctx, uint8_t index_page,
