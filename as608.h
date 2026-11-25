@@ -234,8 +234,8 @@ as608_status_t as608_init(as608_t *ctx, const as608_config_t *config);
  * @post A valid terminal ACK sets DONE and stores its raw confirmation
  * code. A transport/protocol fault during BUSY sets DESYNCHRONIZED and
  * records the host error; a non-BUSY context is left unchanged.
- * @note At rebuild stage 10, simple, system-parameter, 16-bit result,
- * index-table ACK and information-page stream phases are active.
+ * @note At rebuild stage 15, simple, system-parameter, 16-bit result,
+ * index-table and search ACK phases plus information-page streaming are active.
  * @see as608_get_result
  * @see as608_confirm_reset
  */
@@ -619,11 +619,47 @@ as608_status_t as608_match_buffers_start(as608_t *ctx, uint16_t *score);
  */
 as608_status_t as608_create_model_start(as608_t *ctx);
 
-/* Incremental rebuild: APIs 01–14 are defined.
+/**
+ * @brief Start a one-to-many fingerprint database search (PS_Search, 0x04).
+ *
+ * @details Searches the specified range of flash template slots using
+ * the feature in the selected CharBuffer. The command encodes BufferID,
+ * StartPage and PageNum; the latter two are 16-bit big-endian fields.
+ * A successful ACK contains the matched PageID and raw 16-bit score.
+ *
+ * @param[in,out] ctx Initialized caller-owned device context.
+ * @param[in,out] search Caller-owned search request and match output.
+ * @retval AS608_STATUS_OK Job admitted; search is not yet confirmed.
+ * @retval AS608_STATUS_INVALID_ARG Null context or search, invalid
+ * buffer ID, zero page_count, or range exceeding the 16-bit PageID space.
+ * @retval AS608_STATUS_NOT_INITIALIZED Context is not initialized.
+ * @retval AS608_STATUS_BUSY Another job owns the context.
+ * @retval AS608_STATUS_RECOVERY_REQUIRED Link is quarantined.
+ * @pre Serialize calls sharing ctx. Keep search valid and separate from
+ * driver storage, and its input fields unchanged, until completion or
+ * abort. The selected CharBuffer must contain valid features.
+ * The application must choose a range within actual sensor capacity;
+ * the driver checks the 16-bit address space, not physical capacity.
+ * @post On admission, state is BUSY and the job deadline starts.
+ * Only a checksum-verified ACK_OK of length 5 with a PageID in the
+ * requested range changes search->match. Admission rejection,
+ * negative ACK, protocol fault, timeout or abort leave it unchanged.
+ * @note AS608_ACK_NOT_FOUND (0x09) is a valid terminal sensor result.
+ * The manual specifies zero PageID and score for this result; the
+ * library intentionally preserves the previous output instead.
+ * Always check both result fields before consuming match.
+ * @see as608_generate_character_start
+ * @see as608_read_parameters_start
+ * @see as608_process
+ * @see as608_get_result
+ * @see AS60x Communication Manual V1.0, printed page 14.
+ */
+as608_status_t as608_search_start(as608_t *ctx, as608_search_t *search);
+
+/* Incremental rebuild: APIs 01–15 are defined.
  * The following API declarations remain contracts until restored.
  * See FEATURES.md.
  */
-as608_status_t as608_search_start(as608_t *ctx, as608_search_t *search);
 as608_status_t as608_load_template_start(as608_t *ctx, as608_char_buffer_t buffer,
                                        uint16_t page_id);
 as608_status_t as608_upload_template_start(as608_t *ctx, as608_char_buffer_t buffer,

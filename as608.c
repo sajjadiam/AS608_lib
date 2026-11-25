@@ -12,6 +12,7 @@ enum as608_command {
     CMD_GET_IMAGE = 0x01,
     CMD_GEN_CHAR = 0x02,
     CMD_MATCH = 0x03,
+    CMD_SEARCH = 0x04,
     CMD_REG_MODEL = 0x05,
     CMD_READ_PARAMS = 0x0F,
     CMD_VERIFY_PASSWORD = 0x13,
@@ -583,6 +584,68 @@ as608_status_t as608_create_model_start(as608_t *ctx) {
  * ========================================================================= */
 
 /* =========================================================================
+ * API 15: as608_search_start
+ * =========================================================================
+ * PS_Search (0x04), AS60x Communication Manual V1.0, p. 14.
+ * Successful ACK: confirmation, 16-bit PageID and 16-bit MatchScore.
+ */
+
+/* Check that a nonempty page range fits the 16-bit PageID space. */
+static bool valid_range(uint16_t start, uint16_t count) {
+    return (count != 0U) && ((uint32_t)start + (uint32_t)count <= UINT32_C(65536));
+}
+
+/* Encode a uint16_t into two big-endian wire bytes. */
+static void store_u16(uint8_t *bytes, uint16_t value) {
+    bytes[0] = (uint8_t)(value >> 8U);
+    bytes[1] = (uint8_t)value;
+}
+
+/* Validate the search ACK and commit its match only on success. */
+static as608_progress_t accept_search_ack(as608_t *ctx) {
+    const as608_transaction_frame_t frame = as608_transaction_received(&ctx->transaction);
+
+    if ((frame.kind != AS608_PACKET_ACK) || ((frame.length != 1U) && (frame.length != 5U))) {
+        return quarantine(ctx, AS608_STATUS_UNEXPECTED_REPLY);
+    }
+
+    if (frame.data[0] != AS608_ACK_OK) {
+        return finish(ctx, frame.data[0]);
+    }
+
+    if ((frame.length != 5U) || !ctx->reply_output) {
+        return quarantine(ctx, AS608_STATUS_UNEXPECTED_REPLY);
+    }
+
+    as608_search_t *search = ctx->reply_output;
+    const as608_match_t match = {load_u16(frame.data + 1U), load_u16(frame.data + 3U)};
+    const uint32_t end = (uint32_t)search->start_page + (uint32_t)search->page_count;
+
+    if ((match.page_id < search->start_page) || ((uint32_t)match.page_id >= end)) {
+        return quarantine(ctx, AS608_STATUS_UNEXPECTED_REPLY);
+    }
+
+    search->match = match;
+    return finish(ctx, AS608_ACK_OK);
+}
+
+as608_status_t as608_search_start(as608_t *ctx, as608_search_t *search) {
+    if (!search || !valid_buffer(search->buffer) || !valid_range(search->start_page, search->page_count)) {
+        return AS608_STATUS_INVALID_ARG;
+    }
+
+    command_t command = {{CMD_SEARCH, (uint8_t)search->buffer}, 6U, STEP_SEARCH_ACK};
+    store_u16(command.bytes + 2U, search->start_page);
+    store_u16(command.bytes + 4U, search->page_count);
+
+    return reply_start(ctx, &command, search);
+}
+
+/* =========================================================================
+ * END API 15
+ * ========================================================================= */
+
+/* =========================================================================
  * API 02: as608_process
  * =========================================================================
  * Keep the process dispatcher after the active command API sections so
@@ -633,6 +696,10 @@ as608_progress_t as608_process(as608_t *ctx) {
             limit = 33U;
             break;
         }
+        case STEP_SEARCH_ACK: {
+            limit = 5U;
+            break;
+        }
         case STEP_INFO_DATA: {
             limit = 0U; /* Receive is armed by the preceding ACK or DATA handler. */
             break;
@@ -672,6 +739,9 @@ as608_progress_t as608_process(as608_t *ctx) {
                 case STEP_INDEX_ACK: {
                     return accept_index_ack(ctx);
                 }
+                case STEP_SEARCH_ACK: {
+                    return accept_search_ack(ctx);
+                }
                 case STEP_INFO_ACK: {
                     return accept_info_ack(ctx);
                 }
@@ -709,37 +779,14 @@ as608_progress_t as608_process(as608_t *ctx) {
  * ========================================================================= */
 
 // Remaining command opcodes; migrate into enum as608_command when needed.
-//     CMD_SEARCH = 0x04, CMD_STORE_CHAR = 0x06,
+//     CMD_STORE_CHAR = 0x06,
 //     CMD_LOAD_CHAR = 0x07, CMD_UP_CHAR = 0x08, CMD_DOWN_CHAR = 0x09,
 //     CMD_DELETE_CHAR = 0x0C, CMD_EMPTY = 0x0D,
-// 
-// static bool valid_range(uint16_t start, uint16_t count)
-// {
-//     return count != 0U && (uint32_t)start + (uint32_t)count <= UINT32_C(65536);
-// }
-// 
-// static void store_u16(uint8_t *bytes, uint16_t value)
-// {
-//     bytes[0] = (uint8_t)(value >> 8U);
-//     bytes[1] = (uint8_t)value;
-// }
 // 
 // static bool supported_size(size_t length)
 // {
 //     return (length == AS608_TEMPLATE_512_BYTES) ||
 //            (length == AS608_TEMPLATE_768_BYTES);
-// }
-// 
-// as608_status_t as608_search_start(as608_t *ctx, as608_search_t *search)
-// {
-//     if (search == NULL || !valid_buffer(search->buffer) ||
-//         !valid_range(search->start_page, search->page_count)) {
-//         return AS608_STATUS_INVALID_ARG;
-//     }
-//     command_t command = {{CMD_SEARCH, (uint8_t)search->buffer}, 6U, STEP_SEARCH_ACK};
-//     store_u16(command.bytes + 2U, search->start_page);
-//     store_u16(command.bytes + 4U, search->page_count);
-//     return reply_start(ctx, &command, search);
 // }
 // 
 // static command_t page_command(uint8_t code, as608_char_buffer_t buffer, uint16_t page)
