@@ -264,13 +264,37 @@ as608_progress_t as608_process(as608_t *ctx);
  */
 bool as608_get_result(const as608_t *ctx, as608_result_t *result);
 
-/* Incremental rebuild: APIs 01–03 are defined.
+/**
+ * @brief Logically abort an admitted job and quarantine its link.
+ *
+ * @details Only a BUSY job can be aborted. This function does not send
+ * a cancellation command, cancel queued UART bytes, stop DMA/interrupts,
+ * flush RX, reset the sensor, read the clock or wait for I/O.
+ * Previously accepted TX bytes remain owned by the port. The sensor may
+ * still execute the command and may still send a reply.
+ *
+ * @param[in,out] ctx Caller-owned device context.
+ * @retval AS608_STATUS_OK The BUSY job was logically aborted.
+ * @retval AS608_STATUS_RECOVERY_REQUIRED The context is already quarantined.
+ * @retval AS608_STATUS_INVALID_ARG NULL context or a state other than
+ * BUSY or DESYNCHRONIZED.
+ * @pre Calls sharing the context must be serialized.
+ * @post On success, the state is DESYNCHRONIZED and the stored result
+ * status is AS608_STATUS_RECOVERY_REQUIRED; confirmation is invalid.
+ * Subsequent as608_process() calls return AS608_FAILED without I/O.
+ * The application may release the aborted job's caller-owned buffers.
+ * @post On failure, the context is unchanged.
+ * @warning Abort does not roll back sensor-side effects, including flash
+ * writes. External physical recovery is required before further commands.
+ * @see as608_get_result
+ * @see as608_confirm_reset
+ */
+as608_status_t as608_abort(as608_t *ctx);
+
+/* Incremental rebuild: APIs 01–04 are defined.
  * The following API declarations remain contracts until restored.
  * See FEATURES.md.
  */
-
-/** @brief Abort an in-flight job and quarantine its link. */
-as608_status_t as608_abort(as608_t *ctx);
 
 /** @brief Acknowledge externally completed physical recovery.
  * @pre The application has stopped old TX, physically reset/power-cycled

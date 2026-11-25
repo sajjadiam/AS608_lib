@@ -15,7 +15,8 @@ This checklist tracks the host library against the Synochip AS60x Communication 
 - [x] API 01: `as608_init()` — active implementation and dedicated tests.
 - [x] API 02: `as608_process()` — active bounded simple-ACK path and dedicated tests; additional command phases restored with their start APIs.
 - [x] API 03: `as608_get_result()` — terminal result snapshot and dedicated tests.
-- [ ] API 04: `as608_abort()`.
+- [x] API 04: `as608_abort()` — logical abort and quarantine, dedicated tests.
+- [ ] API 05: `as608_confirm_reset()`.
 - [ ] Remaining lifecycle and command APIs, restored individually in header order.
 
 Active wire-command coverage: **0/31** until the command APIs are restored.

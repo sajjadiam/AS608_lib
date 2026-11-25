@@ -161,6 +161,31 @@ bool as608_get_result(const as608_t *ctx, as608_result_t *result) {
  * ========================================================================= */
 
 /* =========================================================================
+ * API 04: as608_abort
+ * ========================================================================= */
+
+as608_status_t as608_abort(as608_t *ctx) {
+    if (!ctx) {
+        return AS608_STATUS_INVALID_ARG;
+    }
+
+    if (ctx->state == AS608_STATE_DESYNCHRONIZED) {
+        return AS608_STATUS_RECOVERY_REQUIRED;
+    }
+
+    if (ctx->state != AS608_STATE_BUSY) {
+        return AS608_STATUS_INVALID_ARG;
+    }
+
+    (void)quarantine(ctx, AS608_STATUS_RECOVERY_REQUIRED);
+    return AS608_STATUS_OK;
+}
+
+/* =========================================================================
+ * END API 04
+ * ========================================================================= */
+
+/* =========================================================================
  * INACTIVE REFERENCE — incremental API rebuild
  *
  * Previous implementation from commit 53425e4.
@@ -626,17 +651,6 @@ bool as608_get_result(const as608_t *ctx, as608_result_t *result) {
 //     const command_t command = page_command(CMD_STORE_CHAR,
 //         ctx->download_buffer, ctx->page_id);
 //     return next_or_fault(ctx, command_start(ctx, &command));
-// }
-// 
-// as608_status_t as608_abort(as608_t *ctx)
-// {
-//     if (ctx == NULL) return AS608_STATUS_INVALID_ARG;
-//     if (ctx->state == AS608_STATE_DESYNCHRONIZED) {
-//         return AS608_STATUS_RECOVERY_REQUIRED;
-//     }
-//     if (ctx->state != AS608_STATE_BUSY) return AS608_STATUS_INVALID_ARG;
-//     (void)quarantine(ctx, AS608_STATUS_RECOVERY_REQUIRED);
-//     return AS608_STATUS_OK;
 // }
 // 
 // as608_status_t as608_confirm_reset(as608_t *ctx)
