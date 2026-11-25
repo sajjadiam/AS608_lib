@@ -10,6 +10,7 @@
 
 enum as608_command {
     CMD_GET_IMAGE = 0x01,
+    CMD_GEN_CHAR = 0x02,
     CMD_READ_PARAMS = 0x0F,
     CMD_VERIFY_PASSWORD = 0x13,
     CMD_READ_INFO = 0x16,
@@ -522,6 +523,32 @@ as608_status_t as608_capture_image_start(as608_t *ctx) {
  * ========================================================================= */
 
 /* =========================================================================
+ * API 12: as608_generate_character_start
+ * =========================================================================
+ * PS_GenChar (0x02), AS60x Communication Manual V1.0, pp. 13–14.
+ * Generates fingerprint features from ImageBuffer into a CharBuffer.
+ */
+
+/* Check whether the requested character buffer ID is supported. */
+static bool valid_buffer(as608_char_buffer_t buffer) {
+    return (buffer == AS608_CHAR_BUFFER_1) || (buffer == AS608_CHAR_BUFFER_2);
+}
+
+as608_status_t as608_generate_character_start(as608_t *ctx, as608_char_buffer_t buffer) {
+    if (!valid_buffer(buffer)) {
+        return AS608_STATUS_INVALID_ARG;
+    }
+
+    const command_t command = {{CMD_GEN_CHAR, (uint8_t)buffer}, 2U, STEP_SIMPLE_ACK};
+
+    return launch(ctx, &command);
+}
+
+/* =========================================================================
+ * END API 12
+ * ========================================================================= */
+
+/* =========================================================================
  * API 02: as608_process
  * =========================================================================
  * Keep the process dispatcher after the active command API sections so
@@ -648,7 +675,7 @@ as608_progress_t as608_process(as608_t *ctx) {
  * ========================================================================= */
 
 // Remaining command opcodes; migrate into enum as608_command when needed.
-//     CMD_GEN_CHAR = 0x02, CMD_MATCH = 0x03,
+//     CMD_MATCH = 0x03,
 //     CMD_SEARCH = 0x04, CMD_REG_MODEL = 0x05, CMD_STORE_CHAR = 0x06,
 //     CMD_LOAD_CHAR = 0x07, CMD_UP_CHAR = 0x08, CMD_DOWN_CHAR = 0x09,
 //     CMD_DELETE_CHAR = 0x0C, CMD_EMPTY = 0x0D,
@@ -668,20 +695,6 @@ as608_progress_t as608_process(as608_t *ctx) {
 // {
 //     return (length == AS608_TEMPLATE_512_BYTES) ||
 //            (length == AS608_TEMPLATE_768_BYTES);
-// }
-// 
-// static bool valid_buffer(as608_char_buffer_t buffer)
-// {
-//     return (buffer == AS608_CHAR_BUFFER_1) ||
-//            (buffer == AS608_CHAR_BUFFER_2);
-// }
-// 
-// as608_status_t as608_generate_character_start(as608_t *ctx,
-//                                              as608_char_buffer_t buffer)
-// {
-//     if (!valid_buffer(buffer)) return AS608_STATUS_INVALID_ARG;
-//     const command_t command = {{CMD_GEN_CHAR, (uint8_t)buffer}, 2U, STEP_SIMPLE_ACK};
-//     return launch(ctx, &command);
 // }
 // 
 // as608_status_t as608_match_buffers_start(as608_t *ctx, uint16_t *score)

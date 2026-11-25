@@ -519,12 +519,43 @@ as608_status_t as608_read_information_page_start(as608_t *ctx, uint8_t *data, si
  */
 as608_status_t as608_capture_image_start(as608_t *ctx);
 
-/* Incremental rebuild: APIs 01–11 are defined.
+/**
+ * @brief Start fingerprint feature extraction (PS_GenChar, opcode 0x02).
+ *
+ * @details Converts the image in the sensor's internal ImageBuffer into
+ * a fingerprint feature file in the selected CharBuffer. No image or
+ * feature bytes are transferred to the host. The reply is a one-byte ACK.
+ *
+ * @param[in,out] ctx Initialized caller-owned device context.
+ * @param[in] buffer Destination AS608_CHAR_BUFFER_1 or AS608_CHAR_BUFFER_2.
+ * @retval AS608_STATUS_OK Job admitted; feature extraction not yet confirmed.
+ * @retval AS608_STATUS_INVALID_ARG Null context or unsupported buffer ID.
+ * @retval AS608_STATUS_NOT_INITIALIZED Context is not initialized.
+ * @retval AS608_STATUS_BUSY Another job owns the context.
+ * @retval AS608_STATUS_RECOVERY_REQUIRED Link is quarantined.
+ * @pre Serialize calls sharing ctx. A valid image must already exist in
+ * ImageBuffer for successful extraction (normally after PS_GetImage).
+ * The driver does not track or enforce sensor-side image validity.
+ * @post On admission, state is BUSY and the job deadline starts.
+ * Rejected admission leaves the context and previous result unchanged.
+ * @note Check both terminal result fields. Confirmation 0x00 means
+ * successful extraction; 0x01 is a sensor packet error, 0x06 indicates
+ * poor image quality, 0x07 insufficient features, and 0x15 invalid image.
+ * A negative ACK is not a host transport fault. Do not rely on the
+ * destination buffer containing fresh features after a failed operation.
+ * The manual maps other buffer IDs to CharBuffer2; this library deliberately
+ * rejects them to prevent accidental writes to the wrong buffer.
+ * @see as608_capture_image_start
+ * @see as608_process
+ * @see as608_get_result
+ * @see AS60x Communication Manual V1.0, printed pages 13–14.
+ */
+as608_status_t as608_generate_character_start(as608_t *ctx, as608_char_buffer_t buffer);
+
+/* Incremental rebuild: APIs 01–12 are defined.
  * The following API declarations remain contracts until restored.
  * See FEATURES.md.
  */
-as608_status_t as608_generate_character_start(as608_t *ctx,
-                                             as608_char_buffer_t buffer);
 as608_status_t as608_match_buffers_start(as608_t *ctx, uint16_t *score);
 as608_status_t as608_create_model_start(as608_t *ctx);
 as608_status_t as608_search_start(as608_t *ctx, as608_search_t *search);
