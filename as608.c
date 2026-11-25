@@ -10,7 +10,8 @@
 
 enum as608_command {
     CMD_READ_PARAMS = 0x0F,
-    CMD_VERIFY_PASSWORD = 0x13
+    CMD_VERIFY_PASSWORD = 0x13,
+    CMD_COUNT = 0x1D
 };
 
 enum as608_step {
@@ -325,6 +326,42 @@ as608_status_t as608_read_parameters_start(as608_t *ctx, as608_parameters_t *out
  * ========================================================================= */
 
 /* =========================================================================
+ * API 08: as608_get_template_count_start
+ * =========================================================================
+ * PS_ValidTempleteNum (0x1D), AS60x Communication Manual V1.0, pp. 26–27.
+ * Successful ACK: confirmation byte followed by a 16-bit template count.
+ */
+
+static as608_progress_t accept_u16_ack(as608_t *ctx) {
+    const as608_transaction_frame_t frame = as608_transaction_received(&ctx->transaction);
+
+    if ((frame.kind != AS608_PACKET_ACK) || ((frame.length != 1U) && (frame.length != 3U))) {
+        return quarantine(ctx, AS608_STATUS_UNEXPECTED_REPLY);
+    }
+
+    if (frame.data[0] != AS608_ACK_OK) {
+        return finish(ctx, frame.data[0]);
+    }
+
+    if ((frame.length != 3U) || !ctx->reply_output) {
+        return quarantine(ctx, AS608_STATUS_UNEXPECTED_REPLY);
+    }
+
+    *(uint16_t *)ctx->reply_output = load_u16(frame.data + 1U);
+    return finish(ctx, AS608_ACK_OK);
+}
+
+as608_status_t as608_get_template_count_start(as608_t *ctx, uint16_t *count) {
+    const command_t command = {{CMD_COUNT}, 1U, STEP_U16_ACK};
+
+    return reply_start(ctx, &command, count);
+}
+
+/* =========================================================================
+ * END API 08
+ * ========================================================================= */
+
+/* =========================================================================
  * API 02: as608_process
  * =========================================================================
  * Keep the process dispatcher after the active command API sections so
@@ -354,8 +391,24 @@ as608_progress_t as608_process(as608_t *ctx) {
         return AS608_FAILED;
     }
 
-    if ((ctx->step != STEP_SIMPLE_ACK) && (ctx->step != STEP_READ_PARAMS_ACK)) {
-        return quarantine(ctx, AS608_STATUS_UNEXPECTED_REPLY);
+    size_t limit;
+
+    switch (ctx->step) {
+        case STEP_SIMPLE_ACK: {
+            limit = 1U;
+            break;
+        }
+        case STEP_READ_PARAMS_ACK: {
+            limit = 17U;
+            break;
+        }
+        case STEP_U16_ACK: {
+            limit = 3U;
+            break;
+        }
+        default: {
+            return quarantine(ctx, AS608_STATUS_UNEXPECTED_REPLY);
+        }
     }
 
     const as608_transaction_result_t result = as608_transaction_process(&ctx->transaction);
@@ -366,17 +419,25 @@ as608_progress_t as608_process(as608_t *ctx) {
         }
 
         case AS608_TXN_SENT: {
-            const size_t limit = (ctx->step == STEP_READ_PARAMS_ACK) ? 17U : 1U;
             as608_transaction_receive(&ctx->transaction, limit);
             return AS608_PENDING;
         }
 
         case AS608_TXN_RECEIVED: {
-            if (ctx->step == STEP_READ_PARAMS_ACK) {
-                return accept_parameters_ack(ctx);
+            switch (ctx->step) {
+                case STEP_SIMPLE_ACK: {
+                    return accept_simple_ack(ctx);
+                }
+                case STEP_READ_PARAMS_ACK: {
+                    return accept_parameters_ack(ctx);
+                }
+                case STEP_U16_ACK: {
+                    return accept_u16_ack(ctx);
+                }
+                default: {
+                    return quarantine(ctx, AS608_STATUS_UNEXPECTED_REPLY);
+                }
             }
-
-            return accept_simple_ack(ctx);
         }
 
         case AS608_TXN_FAULT: {
@@ -409,7 +470,7 @@ as608_progress_t as608_process(as608_t *ctx) {
 //     CMD_LOAD_CHAR = 0x07, CMD_UP_CHAR = 0x08, CMD_DOWN_CHAR = 0x09,
 //     CMD_DELETE_CHAR = 0x0C, CMD_EMPTY = 0x0D,
 //     CMD_READ_INFO = 0x16,
-//     CMD_COUNT = 0x1D, CMD_READ_INDEX = 0x1F
+//     CMD_READ_INDEX = 0x1F
 // 
 // static bool valid_range(uint16_t start, uint16_t count)
 // {
@@ -437,12 +498,6 @@ as608_progress_t as608_process(as608_t *ctx) {
 // static as608_status_t simple_start(as608_t *ctx, uint8_t code)
 // {
 //     return launch(ctx, &(const command_t){{code}, 1U, STEP_SIMPLE_ACK});
-// }
-// 
-// as608_status_t as608_get_template_count_start(as608_t *ctx, uint16_t *count)
-// {
-//     const command_t command = {{CMD_COUNT}, 1U, STEP_U16_ACK};
-//     return reply_start(ctx, &command, count);
 // }
 // 
 // as608_status_t as608_read_index_table_start(as608_t *ctx, uint8_t index_page,

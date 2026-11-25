@@ -39,3 +39,5 @@ jobs:
           ./build/test_verify_password
           ${{ matrix.compiler }} -std=c11 -Wall -Wextra -Werror -pedantic -I. as608_packet.c as608_transaction.c as608.c test_as608_read_parameters.c -o build/test_read_parameters
           ./build/test_read_parameters
+          ${{ matrix.compiler }} -std=c11 -Wall -Wextra -Werror -pedantic -I. as608_packet.c as608_transaction.c as608.c test_as608_get_template_count.c -o build/test_get_template_count
+          ./build/test_get_template_count

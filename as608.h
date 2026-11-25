@@ -234,8 +234,8 @@ as608_status_t as608_init(as608_t *ctx, const as608_config_t *config);
  * @post A valid terminal ACK sets DONE and stores its raw confirmation
  * code. A transport/protocol fault during BUSY sets DESYNCHRONIZED and
  * records the host error; a non-BUSY context is left unchanged.
- * @note At rebuild stage 07, simple ACK and system-parameter ACK phases
- * are active. Future command phases will extend this same engine.
+ * @note At rebuild stage 08, simple ACK, system-parameter ACK and
+ * 16-bit result ACK phases are active.
  * @see as608_get_result
  * @see as608_confirm_reset
  */
@@ -397,11 +397,38 @@ as608_status_t as608_verify_password_start(as608_t *ctx, uint32_t password);
  */
 as608_status_t as608_read_parameters_start(as608_t *ctx, as608_parameters_t *out);
 
-/* Incremental rebuild: APIs 01–07 are defined.
+/**
+ * @brief Start reading the number of valid stored templates (opcode 0x1D).
+ *
+ * @details PS_ValidTempleteNum takes no command arguments. A successful
+ * ACK contains one confirmation byte and a 16-bit big-endian count.
+ * The result is the number of enrolled templates, not database capacity
+ * or a free PageID. Zero is a valid successful count.
+ *
+ * @param[in,out] ctx Initialized caller-owned device context.
+ * @param[out] count Writable caller-owned uint16_t result.
+ * @retval AS608_STATUS_OK Job admitted; count is not yet available.
+ * @retval AS608_STATUS_INVALID_ARG Null context or output.
+ * @retval AS608_STATUS_NOT_INITIALIZED Context is not initialized.
+ * @retval AS608_STATUS_BUSY Another job owns the context.
+ * @retval AS608_STATUS_RECOVERY_REQUIRED Link is quarantined.
+ * @pre Serialize calls on ctx. Keep count valid and separate from driver
+ * storage until the job terminates or is aborted.
+ * @post On successful admission the state is BUSY. Count is written
+ * only after a complete checksum-verified ACK_OK with a 3-byte payload.
+ * On rejection, negative ACK, protocol error, timeout or abort, count
+ * remains unchanged.
+ * @note Poll as608_process() and check both result fields before using count.
+ * @see as608_process
+ * @see as608_get_result
+ * @see AS60x Communication Manual V1.0, printed pages 26–27.
+ */
+as608_status_t as608_get_template_count_start(as608_t *ctx, uint16_t *count);
+
+/* Incremental rebuild: APIs 01–08 are defined.
  * The following API declarations remain contracts until restored.
  * See FEATURES.md.
  */
-as608_status_t as608_get_template_count_start(as608_t *ctx, uint16_t *count);
 as608_status_t as608_read_index_table_start(as608_t *ctx, uint8_t index_page,
                                          uint8_t *bitmap, size_t capacity);
 as608_status_t as608_read_information_page_start(as608_t *ctx, uint8_t *data,
