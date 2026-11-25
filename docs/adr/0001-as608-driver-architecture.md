@@ -1,94 +1,39 @@
-# ADR-0001: AS608 embedded C driver architecture
+# ADR-0001: Unified cooperative AS608 driver
 
-- **Status:** Accepted baseline — the approved public headers and private packet header are committed; implementation, hardware validation and remaining recovery policy are pending
-- **Date:** 2026-11-11
-- **Confirmed hardware target:** Synochip AS608_QCCF (QFN32), based on user's direct observation of the IC marking and pin count on a previously purchased module. This is hardware identification, not firmware identification.
-- **Protocol family:** AS60x UART packet protocol (module-firmware compatibility to be validated).
+Status: Accepted architecture; host CI and target validation tracked separately.
 
-## Context and verified protocol facts
+## Decision
 
-The ATK-AS608 manual documents UART communication (8N1, default 57600 baud on that board), a default four-byte device address of 0xFFFFFFFF, two feature buffers, and packet categories command (0x01), data (0x02), acknowledgement (0x07), and end-data (0x08). Packets begin with 0xEF01. The two-byte packet length covers payload plus the two checksum bytes; the 16-bit checksum is the sum of packet identifier, length bytes, and payload bytes. All multibyte wire fields are transmitted most-significant byte first. Acknowledgement payload begins with a one-byte confirmation code. These are protocol facts, not assumptions about every marketed AS608 board.
+One C11 non-blocking command and transaction engine in as608.c, one public
+header as608.h, one UART callback contract in as608_port.h, one independent
+packet codec. No production waiting loops or parallel synchronous API. The
+former implementation remains available only in Git history. Tests drive the
+same production engine and may use bounded test-only polling helpers.
 
-References:
-- ATK-AS608 module user manual V1.00 (2016-05-12), sections 2.2–2.4: https://it.scribd.com/document/773294313/AS608-Fingerprint-Sensor-User-Manual
-- AS60x fingerprint SOC user manual (source-hosted PDF): https://github.com/siyouluo/FingerprintLock/blob/V2.0/datasheet/AS608datasheet/AS60x%E6%8C%87%E7%BA%B9%E8%AF%86%E5%88%ABSOC%E7%94%A8%E6%88%B7%E6%89%8B%E5%86%8CV10.pdf
-- Reference implementation for command coverage (not normative): https://github.com/adafruit/Adafruit-Fingerprint-Sensor-Library
+## Protocol and safety
 
-## Hardware baseline and compatibility limits
+Use existing AS60x command/ACK formats, big-endian wire fields, 0xEF01 start
+and additive 16-bit checksum. A job has one wrap-safe deadline. UART I/O is
+partial and non-blocking; zero progress is not a fault. The port copies queued
+TX bytes and reports loss/errors. TX drain includes physical UART completion.
 
-- 2026-11-11: User inspected a physical AS608 module and confirmed the IC marking `AS608_QCCF` with 32 pins. Treat QCCF as the verified chip variant of the reference sample; do not infer the chip variant of every third-party AS608 board.
-- Synochip's AS608 Processor Datasheet v1.00 (2015-09), Table 2-1: `AS608_QCCF` is QFN32; `AS608_QYCF` is QFN60. Both list 512 KB flash and 128 KB SRAM, but their peripheral availability differs.
-- The chip package does **not** identify the connected fingerprint image sensor, installed firmware, or fingerprint-template algorithm/version. `PS_ReadSysPara` reports a `SensorType` code in the AS60x communication manual; it is **not** an AS608_QCCF/QYCF package identifier. Product/software descriptors may be available via `PS_ReadINFpage` on supported firmware.
-- The AS60x manual describes 256-byte feature files and 512-byte templates, and defines `PS_LoadChar`, `PS_UpChar`, `PS_DownChar` and `PS_StoreChar`. This specifies a transfer mechanism, **not** proof of cross-firmware or cross-sensor template compatibility. Do not hardcode cross-device sync as guaranteed. Opaque template transfer and matching tests on both physical modules must establish interoperability before enabling sync.
-- Image transfer is not a default replacement for an incompatible template: the manual specifies 4-bit-per-pixel image transfer over UART, and it provides no guarantee of cross-firmware/sensor reconstruction or recognition.
-- Correct the earlier assumption that all AS608-like modules have identical UART framing: the older AS60x manual states default 57600 baud, 8 data bits, **2 stop bits**, no parity; module-specific electrical and UART settings must be independently confirmed. This driver's transport interface must not enforce 8N1.
+On malformed or late replies, timeout, I/O failure or abort, quarantine.
+Physical reset, boot wait, TX cancellation, full RX/TX purge and error
+cleanup are platform responsibilities; only after those guarantees may
+as608_confirm_reset release quarantine. Flash operations may have uncertain
+outcomes after timeout. No implicit retry or recovery.
 
-## Decisions
+Supported opaque template sizes are 512 and 768 bytes. Hardware evidence:
+two AS608_QCCF devices on STM32F103C8T6 transferred a 768-byte template
+(six 128-byte data packets) and both recognized the same finger using the
+historical driver. This does not establish cross-firmware compatibility
+or validate the new hardware port.
 
-1. **C11, portable core.** The library shall not include vendor HAL, RTOS, or MCU register headers. A thin application-provided port layer supplies byte transmit, receive and monotonic millisecond time.
-2. **Caller-owned memory, no heap.** The application owns one device context per AS608 instance; the core never calls malloc/free. No global mutable device state. Streamed image/template transfers are deferred until their memory contract is reviewed.
-3. **Blocking command API for v0.1.** Each command is a synchronous transaction with one total timeout budget measured using a wrap-safe monotonic clock. The I/O interface permits partial transfers, zero bytes on timeout, and negative values on transport failure. Calls may block, but should not busy-spin unnecessarily in platform ports. An asynchronous API may be added independently later; it is not claimed to exist in v0.1.
-4. **Layer split.** Public API (`include/as608.h`), platform transport contract (`include/as608_port.h`), command implementation (`src/as608.c`), private framing (`src/as608_packet.h/.c`), private blocking transaction (`src/as608_transaction.h/.c`), and optional workflow (`src/as608_workflow.c`). The transaction layer remains independent to isolate partial UART I/O, transaction-wide deadlines and multi-packet transfers. Helpers for send/receive header/payload are `static` in the transaction source; only begin/send/receive form its private interface.
-5. **Three distinct error domains.** Input misuse, transport/timeouts and malformed frames are host-side errors; device confirmation codes are preserved losslessly and must not be mistaken for UART errors. An ACK with NO_FINGER or NOT_FOUND is a valid transaction carrying a nonzero device confirmation code.
-6. **Strict parsing.** Validate start code, expected address, packet identifier, length bounds and 16-bit checksum before exposing returned data. Use explicit big-endian encoding/decoding, never wire-struct casting or packed layout assumptions. Unexpected/truncated responses fail cleanly. Receive synchronization/recovery policy must be unit-tested.
-7. **Timing and concurrency.** No implicit delays, RTOS calls or IRQ disabling in the core. The application serializes transactions on a single sensor/UART; the public synchronous functions are not thread-safe on the same device context. Timeouts shall apply to an entire transaction rather than reset for every received byte.
-8. **Feature scope in v0.1.** Verify password (explicit, not silently assumed), read system parameters, image capture, image-to-character conversion for CharBuffer1/2, combine model, search by library range, store, delete, empty database, and read template count. Model/image upload, LED variants, persistent setting changes and automatic enrollment are deferred until their board/version behavior is verified.
-9. **Runtime capability discovery.** Do not hardcode advertised capacity (300 on the ATK-AS608 reference board), baud rate, packet size, or fingerprint library bounds for every board. Read parameters when available. The caller configures the UART prior to init; init itself does not probe hardware.
-10. **Security and destructive operations.** Sensor password is an access-control parameter, not cryptographic protection. Avoid retaining it in device context; pass it only to explicit verification. The library shall not automatically erase templates, overwrite IDs, change password/address, or reconfigure persistent device settings.
-11. **Validation.** Host-side deterministic tests for serializer vectors, checksums, endian conversion, split reads/writes, malformed/oversized lengths, lost bytes, slow partial transfers, timeout (including 32-bit tick wrap), unexpected device address, confirmation-code propagation, and search-range arithmetic. Hardware integration tests are separate.
+Reference: AS60x fingerprint SOC user manual V1.0, packet and command
+format sections. Reference hardware configuration: 57600 baud, 8N2 on the
+tested modules. See prior Git revisions for the original detailed ADR.
 
-## Transaction layer acceptance and unresolved recovery
+## Remaining validation
 
-- 2026-11-11: Approved an independent transaction layer. Committed `src/as608_transaction.h`, `src/as608_transaction.c`, and `tests/test_as608_transaction.c` to `main`. The blocking send/receive functions were refactored into private `static` helpers without extending the public API.
-- Host-side tests cover partial UART transfers, a single deadline spanning send/receive, 32-bit timer rollover, checksum failure, packet-type validation, oversized reply rejection and sticky per-transaction failure. These tests do not establish hardware correctness.
-- **Recovery contract now specified:** A device-wide quarantine blocks subsequent frames after ambiguous failures, and only a verified platform physical reset + UART cleanup clears it. Actual board support and hardware fault-injection tests remain outstanding.
-
-## Device-level link recovery contract (2026-11-14)
-
-- **Quarantine, fail closed.** Any host I/O, timeout, malformed-frame, unexpected packet or checksum failure detected in the blocking Transaction Layer transitions `as608_t.state` to `AS608_STATE_DESYNCHRONIZED` and stores the original error in the per-transaction context. Subsequently, `as608_transaction_begin()` refuses new work with `AS608_STATUS_RECOVERY_REQUIRED`, without consuming stale UART bytes. Host argument-validation errors (no I/O attempted) do not quarantine the link.
-- **Explicit platform recovery.** `as608_recover(dev)` invokes the optional `as608_port_t.recover(user, timeout_ms)`. To report success, the platform callback MUST abort outstanding host TX/DMA, guarantee that previously started sensor operations can no longer emit a response (typically real sensor reset/power cycle), wait for boot, and remove all stale host UART FIFO/DMA/software-RX data. Clearing the current RX buffer alone does not guarantee recovery.
-- **No unsafe fallback.** Missing recovery callback, failed reset or exhausted recovery timeout leaves the device quarantined. The driver does not automatically retry an ambiguous operation, clear the flag on arbitrary status, or use a generic unverified UART flush as proof of synchronization.
-- **Startup precondition.** A fresh `as608_init()` (not yet implemented) assumes a known-clean sensor communication epoch established by the host. Recalling init on an already-uncertain physical link is not a recovery procedure. An implementation should reject or explicitly document reinitialization of an active context.
-- **Boundaries.** The callback's guarantee is a hardware/platform contract, not a property proven by C code. The Synochip AS608 processor datasheet documents a RESETN input, but the actual QCCF *module* may or may not expose a suitable reset or independently controllable power rail. Verify wiring and reset timing on the specific board before enabling recovery.
-- **Storage consistency and command sequencing.** Physical recovery does not undo a previously started `StoreChar`, `DeleteChar`, or `Empty` operation. After an ambiguous acknowledgment, reconcile the affected PageIDs / index table and central sync registry. Because AS60x has no sequence ID, a command-layer error detected after receipt of an intact frame must also quarantine the device if more packets may still arrive or a reply is ambiguous; this is pending command-layer integration.
-- **Timeout contract.** Recovery uses the device's configured transaction timeout. The core measures elapsed ticks modulo 2^32 and rejects callbacks returning at or beyond the deadline; ports are required to honor their blocking budget. Failed recovery remains quarantined.
-- **Validation.** Host mock tests cover split transfers, stale ACK quarantining, missing/failing/timed-out physical reset callbacks, invalid input, and 32-bit clock rollover. Real-board fault injection and physical reset verification remain outstanding.
-
-## Lifecycle state revision (2026-11-14)
-
-- Replaced the two boolean-like fields `initialized` and `link_unsynchronized` with one C11 enum `as608_state_t`: `AS608_STATE_UNINITIALIZED = 0`, `AS608_STATE_READY`, and `AS608_STATE_DESYNCHRONIZED`. The zero state supports explicitly zero-initialized caller-owned contexts; nonzero unexpected states fail closed.
-- Successful `as608_init` (command source not implemented yet) must transition UNINITIALIZED -> READY only after validating the configured callbacks and timeouts. A second init must not silently turn DESYNCHRONIZED into READY. `as608_recover` transitions READY/DESYNCHRONIZED to DESYNCHRONIZED before hardware callback and to READY only after verified successful recovery.
-- Transaction send/receive retain the original sticky transaction error; new transactions reject DESYNCHRONIZED with `AS608_STATUS_RECOVERY_REQUIRED`. The public state field is driver-owned and not an application-level override.
-- The enum uses implementation-defined storage size under C11; if memory size proves material, compare ABI and layout on target MCU rather than assuming either `_Bool` or `enum` is one byte.
-
-## Template streaming length contract (2026-11-14)
-
-- The AS60x Communication Manual v1.0, p. 6 documents a **512-byte** template. Hardware validation with two AS608_QCCF modules using packet-size code 2 (128-byte data chunks) observed **six 128-byte fragments = 768 bytes**, with the sixth carrying END_DATA. That captured template was downloaded, stored and successfully searched on the second module. This demonstrates interoperability for the tested pair, **not** all AS608 firmware.
-- `AS608_TEMPLATE_512_BYTES` and `AS608_TEMPLATE_768_BYTES` are accepted sizes. `AS608_TEMPLATE_MAX_BYTES` is the recommended allocation size; the legacy `AS608_TEMPLATE_BYTES` is now an allocation alias (768), **not** a promise of exact length.
-- `as608_template_buffer_t` holds caller-owned `data`, `capacity`, and an output `length`. `as608_read_template()` and `as608_upload_template()` now take this descriptor. A successful transfer sets `length` only after a checksum-verified END_DATA and a validated template length of 512 or 768 bytes. The output `length` remains unchanged on any failed transfer; payload storage may be partially modified.
-- A bounded receive never writes beyond `capacity`. An END_DATA at any unsupported length, or a capacity limit before END_DATA, fails and quarantines the link rather than silently accepting/truncating data. All stream packets share the original transaction deadline. The information-page read remains strictly 512 bytes.
-- `as608_write_template()` and `as608_download_template()` accept 512 or 768 bytes and packetize the **actual supplied length**, using the destination module's reported packet-size code. The caller must pass `source_buffer.length` to writing, **never** its storage `capacity`.
-- **API migration:** Earlier 4-argument `as608_read_template(dev, page, data, capacity)` and `as608_upload_template(dev, buffer, data, capacity)` must be changed to 3-argument calls taking an `as608_template_buffer_t *`. Existing application code must be updated and rebuilt. Old explicit 512-byte-allocation assumptions are no longer safe on the tested firmware.
-- **Limitations:** This does not auto-detect firmware compatibility, infer a PageID from bytes, or verify the destination can match transferred models. Hardware validation remains required for new module variants.
-
-## Public API implications
-
-- A caller-owned as608_t and a compact as608_config_t with a transport callback table, 32-bit device address and transaction timeout.
-- Functions return an as608_result_t containing host status and raw device confirmation code. Outputs are only valid on success.
-- The initial synchronous contract does not guarantee reentrancy or ISR-safe operation.
-- Buffer identifiers are explicitly limited to CharBuffer1 and CharBuffer2; template positions and ranges are 16-bit and validated with widened arithmetic.
-- The approved public headers are committed in `include/as608.h` and `include/as608_port.h`; the reviewed pointer-based private packet contract is committed in `src/as608_packet.h`.
-
-## Alternatives and tradeoffs
-
-- **Single source/header:** slightly lower initial effort but couples framing, I/O and domain commands and makes tests harder.
-- **HAL-specific library:** faster for one MCU but fails portability objective.
-- **Heap-allocated opaque handle:** hides implementation size but introduces allocation/lifetime decisions unsuited to smaller MCUs.
-- **Fully asynchronous from day one:** useful for high concurrency, but adds state, cancellation and race complexity before the basic packet contract has tests.
-
-## Open questions before accepting this ADR
-
-- Confirm the actual *module* revision, IO voltage, power requirements and UART line settings from its own documentation or measurement; the reference IC is identified as AS608_QCCF.
-- Agree on callback return-value conventions, total timeout API and whether all public structs remain caller-owned.
-- Define behavior after incomplete response (port flush/resync strategy) and initial maximum ACK size.
-- Agree on the first milestone: the small blocking command set above, not image/template streaming. Template sync is a possible next milestone contingent on an interoperability test and an explicit streaming API design.
+STM32 UART IT/DMA adapter, physical recovery, complete target enrollment
+and identification, and independent two-UART 768-byte transfer.

@@ -3,7 +3,7 @@
  * @brief Internal, transport-independent AS60x packet framing primitives.
  *
  * @details
- * ISO C11. This private header is for src/ only, not application code.
+ * ISO C11. This private header is for the driver, not application code.
  * Functions operate on host values and caller-owned wire-byte buffers.
  * UART I/O, transaction deadlines, resynchronization, command meanings,
  * and sensor confirmation-code interpretation are outside this layer.

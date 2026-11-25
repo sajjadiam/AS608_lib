@@ -16,11 +16,9 @@ typedef struct {
     size_t split;
 } mock_t;
 
-static int32_t mock_write(void *user, const uint8_t *data, size_t length,
-                          uint32_t budget)
+static int32_t mock_write(void *user, const uint8_t *data, size_t length)
 {
     mock_t *m = user;
-    assert(budget != 0U);
     if (length > m->split) length = m->split;
     assert(m->tx_len + length <= sizeof(m->tx));
     memcpy(m->tx + m->tx_len, data, length);
@@ -29,17 +27,21 @@ static int32_t mock_write(void *user, const uint8_t *data, size_t length,
     return (int32_t)length;
 }
 
-static int32_t mock_read(void *user, uint8_t *data, size_t length,
-                         uint32_t budget)
+static int32_t mock_read(void *user, uint8_t *data, size_t length)
 {
     mock_t *m = user;
-    assert(budget != 0U);
     if (length > m->split) length = m->split;
     if (length > m->rx_len - m->rx_pos) length = m->rx_len - m->rx_pos;
     if (length != 0U) memcpy(data, m->rx + m->rx_pos, length);
     m->rx_pos += length;
     ++m->now;
     return (int32_t)length;
+}
+
+static int32_t mock_tx_idle(void *user)
+{
+    (void)user;
+    return 1;
 }
 
 static uint32_t mock_ms(void *user)
@@ -50,7 +52,7 @@ static uint32_t mock_ms(void *user)
 static void setup(as608_t *dev, mock_t *m)
 {
     const as608_config_t cfg = {
-        .port = {.user = m, .write = mock_write, .read = mock_read,
+        .port = {.user = m, .try_write = mock_write, .try_read = mock_read, .tx_idle = mock_tx_idle,
                  .clock_ms = mock_ms},
         .device_address = AS608_DEFAULT_ADDRESS, .timeout_ms = 10000U
     };
@@ -87,6 +89,22 @@ static void ack(mock_t *m, uint8_t code, const uint8_t *rest, size_t len)
     append_frame(m, AS608_PACKET_ACK, payload, len + 1U);
 }
 
+/* Test harness only: drive the public cooperative API to termination.
+ * Never link this helper into the production firmware. */
+static as608_result_t await_result(as608_t *ctx, as608_status_t admitted)
+{
+    if (admitted != AS608_STATUS_OK) return (as608_result_t){admitted, 0U};
+    for (size_t i = 0U; i < 20000U; ++i) {
+        if (as608_process(ctx) != AS608_PENDING) {
+            as608_result_t result;
+            assert(as608_get_result(ctx, &result));
+            return result;
+        }
+    }
+    assert(0 && "operation did not terminate");
+    return (as608_result_t){AS608_STATUS_TIMEOUT, 0U};
+}
+
 static void assert_success(as608_result_t result)
 {
     assert(result.status == AS608_STATUS_OK);
@@ -101,28 +119,28 @@ static void test_init_and_basic_commands(void)
     assert(as608_init(&dev, &invalid) == AS608_STATUS_INVALID_ARG);
     assert(dev.state == AS608_STATE_UNINITIALIZED);
     setup(&dev, &m);
-    assert(dev.state == AS608_STATE_READY);
+    assert(dev.state == AS608_STATE_IDLE);
     assert(as608_init(&dev, &invalid) == AS608_STATUS_INVALID_ARG);
 
     ack(&m, AS608_ACK_PASSWORD_ERROR, NULL, 0U);
-    const as608_result_t p = as608_verify_password(&dev, UINT32_C(0x12345678));
+    const as608_result_t p = await_result(&dev, as608_verify_password_start(&dev, UINT32_C(0x12345678)));
     assert(p.status == AS608_STATUS_OK &&
            p.confirmation == AS608_ACK_PASSWORD_ERROR);
     assert(m.tx[9] == 0x13U && m.tx[10] == 0x12U &&
            m.tx[11] == 0x34U && m.tx[12] == 0x56U && m.tx[13] == 0x78U);
-    assert(dev.state == AS608_STATE_READY);
+    assert(dev.state == AS608_STATE_DONE);
 
     ack(&m, AS608_ACK_NO_FINGER, NULL, 0U);
-    const as608_result_t c = as608_capture_image(&dev);
+    const as608_result_t c = await_result(&dev, as608_capture_image_start(&dev));
     assert(c.status == AS608_STATUS_OK &&
            c.confirmation == AS608_ACK_NO_FINGER);
 
     ack(&m, AS608_ACK_OK, NULL, 0U);
-    assert_success(as608_generate_character(&dev, AS608_CHAR_BUFFER_2));
+    assert_success(await_result(&dev, as608_generate_character_start(&dev, AS608_CHAR_BUFFER_2)));
     ack(&m, AS608_ACK_OK, NULL, 0U);
-    assert_success(as608_create_model(&dev));
+    assert_success(await_result(&dev, as608_create_model_start(&dev)));
     ack(&m, AS608_ACK_OK, NULL, 0U);
-    assert_success(as608_empty_database(&dev));
+    assert_success(await_result(&dev, as608_empty_database_start(&dev)));
 }
 
 static void test_data_replies(void)
@@ -136,30 +154,30 @@ static void test_data_replies(void)
     };
     ack(&m, AS608_ACK_OK, params, sizeof(params));
     as608_parameters_t out = {0};
-    assert_success(as608_read_parameters(&dev, &out));
+    assert_success(await_result(&dev, as608_read_parameters_start(&dev, &out)));
     assert(out.sensor_type == 2U && out.template_capacity == 1000U &&
            out.packet_size_code == 2U && out.baud_multiplier == 6U);
 
     const uint8_t count[] = {0x01, 0x02};
     ack(&m, AS608_ACK_OK, count, sizeof(count));
     uint16_t number = 0U;
-    assert_success(as608_get_template_count(&dev, &number));
+    assert_success(await_result(&dev, as608_get_template_count_start(&dev, &number)));
     assert(number == 258U);
 
     const uint8_t match[] = {0x04U, 0xD2U};
     ack(&m, AS608_ACK_OK, match, sizeof(match));
     uint16_t score = 0U;
-    assert_success(as608_match_buffers(&dev, &score));
+    assert_success(await_result(&dev, as608_match_buffers_start(&dev, &score)));
     assert(score == 1234U);
 
     const uint8_t find[] = {0x00U, 0x2AU, 0x00U, 0xC8U};
     ack(&m, AS608_ACK_OK, find, sizeof(find));
     as608_search_t search = {.buffer = AS608_CHAR_BUFFER_1,
                              .start_page = 0U, .page_count = 100U};
-    assert_success(as608_search(&dev, &search));
+    assert_success(await_result(&dev, as608_search_start(&dev, &search)));
     assert(search.match.page_id == 42U && search.match.score == 200U);
     ack(&m, AS608_ACK_NOT_FOUND, NULL, 0U);
-    const as608_result_t miss = as608_search(&dev, &search);
+    const as608_result_t miss = await_result(&dev, as608_search_start(&dev, &search));
     assert(miss.status == AS608_STATUS_OK && miss.confirmation == AS608_ACK_NOT_FOUND);
     assert(search.match.page_id == 42U && search.match.score == 200U);
 
@@ -167,7 +185,7 @@ static void test_data_replies(void)
     for (size_t i = 0U; i < sizeof(index); ++i) index[i] = (uint8_t)i;
     ack(&m, AS608_ACK_OK, index, sizeof(index));
     uint8_t bitmap[32] = {0};
-    assert_success(as608_read_index_table(&dev, 2U, bitmap, sizeof(bitmap)));
+    assert_success(await_result(&dev, as608_read_index_table_start(&dev, 2U, bitmap, sizeof(bitmap))));
     assert(memcmp(bitmap, index, sizeof(index)) == 0);
 }
 
@@ -188,7 +206,7 @@ static void test_multiframe_read_and_write(void)
     }
     uint8_t out[AS608_TEMPLATE_MAX_BYTES] = {0};
     as608_template_buffer_t output = {out, sizeof(out), 99U};
-    assert_success(as608_read_template(&dev, 25U, &output));
+    assert_success(await_result(&dev, as608_read_template_start(&dev, 25U, &output)));
     assert(output.length == AS608_TEMPLATE_512_BYTES);
     assert(memcmp(out, expected, sizeof(expected)) == 0);
 
@@ -200,7 +218,7 @@ static void test_multiframe_read_and_write(void)
     ack(&m, AS608_ACK_OK, NULL, 0U); /* DownChar */
     ack(&m, AS608_ACK_OK, NULL, 0U); /* StoreChar */
     const size_t old_tx = m.tx_len;
-    assert_success(as608_write_template(&dev, 25U, expected, sizeof(expected)));
+    assert_success(await_result(&dev, as608_write_template_start(&dev, 25U, expected, sizeof(expected))));
 
     size_t pos = old_tx;
     size_t packets = 0U;
@@ -243,12 +261,12 @@ static void test_bad_stream_quarantines(void)
     append_frame(&m, AS608_PACKET_END_DATA, short_part, sizeof(short_part));
     uint8_t out[AS608_TEMPLATE_MAX_BYTES];
     as608_template_buffer_t output = {out, sizeof(out), 33U};
-    const as608_result_t r = as608_upload_template(
-        &dev, AS608_CHAR_BUFFER_1, &output);
+    const as608_result_t r = await_result(&dev, as608_upload_template_start(
+        &dev, AS608_CHAR_BUFFER_1, &output));
     assert(output.length == 33U);
     assert(r.status == AS608_STATUS_UNEXPECTED_REPLY);
     assert(dev.state == AS608_STATE_DESYNCHRONIZED);
-    assert(as608_capture_image(&dev).status == AS608_STATUS_RECOVERY_REQUIRED);
+    assert(await_result(&dev, as608_capture_image_start(&dev)).status == AS608_STATUS_RECOVERY_REQUIRED);
 }
 
 
@@ -264,20 +282,20 @@ static void test_information_and_database_commands(void)
     append_frame(&m, AS608_PACKET_DATA, chunk, sizeof(chunk));
     append_frame(&m, AS608_PACKET_END_DATA, chunk, sizeof(chunk));
     uint8_t info[AS608_INFORMATION_PAGE_BYTES] = {0};
-    assert_success(as608_read_information_page(&dev, info, sizeof(info)));
+    assert_success(await_result(&dev, as608_read_information_page_start(&dev, info, sizeof(info))));
     assert(memcmp(info, chunk, sizeof(chunk)) == 0);
     assert(memcmp(info + sizeof(chunk), chunk, sizeof(chunk)) == 0);
 
     ack(&m, AS608_ACK_OK, NULL, 0U);
-    assert_success(as608_load_template(&dev, AS608_CHAR_BUFFER_2, 18U));
+    assert_success(await_result(&dev, as608_load_template_start(&dev, AS608_CHAR_BUFFER_2, 18U)));
     ack(&m, AS608_ACK_OK, NULL, 0U);
-    assert_success(as608_store_template(&dev, AS608_CHAR_BUFFER_2, 18U));
+    assert_success(await_result(&dev, as608_store_template_start(&dev, AS608_CHAR_BUFFER_2, 18U)));
     ack(&m, AS608_ACK_OK, NULL, 0U);
-    assert_success(as608_delete_templates(&dev, 18U, 2U));
+    assert_success(await_result(&dev, as608_delete_templates_start(&dev, 18U, 2U)));
 
     const size_t previous_tx = m.tx_len;
-    assert(as608_delete_templates(&dev, 0U, 0U).status == AS608_STATUS_INVALID_ARG);
-    assert(as608_read_index_table(&dev, 4U, chunk, 32U).status == AS608_STATUS_INVALID_ARG);
+    assert(await_result(&dev, as608_delete_templates_start(&dev, 0U, 0U)).status == AS608_STATUS_INVALID_ARG);
+    assert(await_result(&dev, as608_read_index_table_start(&dev, 4U, chunk, 32U)).status == AS608_STATUS_INVALID_ARG);
     assert(m.tx_len == previous_tx);
 }
 
@@ -288,10 +306,10 @@ static void test_protocol_error_quarantines_device(void)
     setup(&dev, &m);
     const uint8_t wrong_payload = 0xA5U;
     append_frame(&m, AS608_PACKET_DATA, &wrong_payload, 1U);
-    const as608_result_t error = as608_capture_image(&dev);
+    const as608_result_t error = await_result(&dev, as608_capture_image_start(&dev));
     assert(error.status == AS608_STATUS_UNEXPECTED_REPLY);
     assert(dev.state == AS608_STATE_DESYNCHRONIZED);
-    assert(as608_capture_image(&dev).status == AS608_STATUS_RECOVERY_REQUIRED);
+    assert(await_result(&dev, as608_capture_image_start(&dev)).status == AS608_STATUS_RECOVERY_REQUIRED);
 }
 
 
@@ -305,19 +323,19 @@ static void test_blob_timeout_and_index_capacity(void)
     (void)memset(bitmap, 0xA5, sizeof(bitmap));
     const size_t old_tx = m.tx_len;
     const size_t old_rx = m.rx_pos;
-    assert(as608_read_index_table(&dev, 0U, bitmap,
-                                  sizeof(bitmap) - 1U).status ==
+    assert(await_result(&dev, as608_read_index_table_start(&dev, 0U, bitmap,
+                                  sizeof(bitmap) - 1U)).status ==
            AS608_STATUS_INVALID_ARG);
     assert(m.tx_len == old_tx && m.rx_pos == old_rx);
     assert(bitmap[0] == 0xA5U);
-    assert(dev.state == AS608_STATE_READY);
+    assert(dev.state == AS608_STATE_IDLE);
 
     uint8_t index[32U];
     for (size_t i = 0U; i < sizeof(index); ++i) {
         index[i] = (uint8_t)(i + 0x20U);
     }
     ack(&m, AS608_ACK_OK, index, sizeof(index));
-    assert_success(as608_read_index_table(&dev, 0U, bitmap, sizeof(bitmap)));
+    assert_success(await_result(&dev, as608_read_index_table_start(&dev, 0U, bitmap, sizeof(bitmap))));
     assert(memcmp(bitmap, index, sizeof(index)) == 0);
 
     /* ACK followed by partial DATA, then no more UART bytes. The fake clock
@@ -328,14 +346,14 @@ static void test_blob_timeout_and_index_capacity(void)
     dev.config.timeout_ms = 30U;
     uint8_t output[AS608_TEMPLATE_MAX_BYTES] = {0};
     as608_template_buffer_t blob = {output, sizeof(output), 73U};
-    const as608_result_t result = as608_upload_template(
-        &dev, AS608_CHAR_BUFFER_1, &blob);
+    const as608_result_t result = await_result(&dev, as608_upload_template_start(
+        &dev, AS608_CHAR_BUFFER_1, &blob));
     assert(blob.length == 73U);
     assert(result.status == AS608_STATUS_TIMEOUT);
     assert(dev.state == AS608_STATE_DESYNCHRONIZED);
     assert(output[0] == 1U && output[3] == 4U);
-    assert(as608_upload_template(&dev, AS608_CHAR_BUFFER_1,
-                                 &blob).status ==
+    assert(await_result(&dev, as608_upload_template_start(&dev, AS608_CHAR_BUFFER_1,
+                                 &blob)).status ==
            AS608_STATUS_RECOVERY_REQUIRED);
 }
 
@@ -362,7 +380,7 @@ static void test_template_768_upload_and_download(void)
     uint8_t data[1024U];
     (void)memset(data, 0xE5, sizeof(data));
     as608_template_buffer_t output = {data, sizeof(data), 123U};
-    assert_success(as608_read_template(&dev, 1U, &output));
+    assert_success(await_result(&dev, as608_read_template_start(&dev, 1U, &output)));
     assert(output.length == AS608_TEMPLATE_768_BYTES);
     assert(memcmp(data, expected, sizeof(expected)) == 0);
     assert(data[768U] == 0xE5U && data[1023U] == 0xE5U);
@@ -376,7 +394,7 @@ static void test_template_768_upload_and_download(void)
     ack(&m, AS608_ACK_OK, NULL, 0U); /* StoreChar */
 
     const size_t tx_start = m.tx_len;
-    assert_success(as608_write_template(&dev, 1U, data, output.length));
+    assert_success(await_result(&dev, as608_write_template_start(&dev, 1U, data, output.length)));
     size_t pos = tx_start;
     size_t count = 0U;
     size_t data_bytes = 0U;
@@ -418,8 +436,8 @@ static void test_template_receive_limits_and_length_semantics(void)
         uint8_t storage[514U];
         (void)memset(storage, 0xC7, sizeof(storage));
         as608_template_buffer_t output = {storage + 1U, 512U, 42U};
-        const as608_result_t result = as608_upload_template(
-            &dev, AS608_CHAR_BUFFER_1, &output);
+        const as608_result_t result = await_result(&dev, as608_upload_template_start(
+            &dev, AS608_CHAR_BUFFER_1, &output));
         assert(result.status != AS608_STATUS_OK);
         assert(dev.state == AS608_STATE_DESYNCHRONIZED);
         assert(output.length == 42U);
@@ -435,8 +453,8 @@ static void test_template_receive_limits_and_length_semantics(void)
         append_frame(&m, AS608_PACKET_END_DATA, segment, sizeof(segment));
         uint8_t storage[AS608_TEMPLATE_MAX_BYTES] = {0};
         as608_template_buffer_t output = {storage, sizeof(storage), 55U};
-        const as608_result_t result = as608_upload_template(
-            &dev, AS608_CHAR_BUFFER_1, &output);
+        const as608_result_t result = await_result(&dev, as608_upload_template_start(
+            &dev, AS608_CHAR_BUFFER_1, &output));
         assert(result.status == AS608_STATUS_UNEXPECTED_REPLY);
         assert(output.length == 55U);
         assert(dev.state == AS608_STATE_DESYNCHRONIZED);
@@ -448,12 +466,12 @@ static void test_template_receive_limits_and_length_semantics(void)
         as608_t dev;
         setup(&dev, &m);
         uint8_t model[AS608_TEMPLATE_MAX_BYTES] = {0};
-        assert(as608_download_template(&dev, AS608_CHAR_BUFFER_1,
-                                       model, 640U).status ==
+        assert(await_result(&dev, as608_download_template_start(&dev, AS608_CHAR_BUFFER_1,
+                                       model, 640U)).status ==
                AS608_STATUS_INVALID_ARG);
-        assert(as608_write_template(&dev, 1U, model, 640U).status ==
+        assert(await_result(&dev, as608_write_template_start(&dev, 1U, model, 640U)).status ==
                AS608_STATUS_INVALID_ARG);
-        assert(m.tx_len == 0U && dev.state == AS608_STATE_READY);
+        assert(m.tx_len == 0U && dev.state == AS608_STATE_IDLE);
     }
 }
 

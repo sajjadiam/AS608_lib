@@ -1,197 +1,136 @@
-# AS608 UART Driver
+# AS608 UART driver
 
-Portable **ISO C11** driver for AS60x-protocol fingerprint modules, validated on two
-**AS608_QCCF** modules connected to an STM32F103C8T6 through USART1 and USART2
-(57,600 baud, 8N2 on the tested hardware). No heap allocation or STM32 HAL
-dependency in the core.
+Portable ISO C11 cooperative **non-blocking** driver for AS60x fingerprint
+modules. No heap, HAL, RTOS, or UART wait loops in the core. One context per
+physical sensor. Historical hardware validation: two AS608_QCCF modules on
+STM32F103C8T6, USART1/USART2, 57,600 baud, 8N2; successful 768-byte template
+transfer. The unified non-blocking port still needs hardware validation.
 
-> **Status:** The original blocking API is the hardware-validated baseline.
-> The additive cooperative async engine is experimental. The async STM32
-> interrupt/DMA port and target validation have **not** been completed.
-
-## Project file tree (flat layout)
+## Flat project structure
 
 ```text
 AS608_lib/
-├── as608.h                       Public blocking API and shared types
-├── as608_port.h                  Blocking UART/clock/recovery callback contract
-├── as608.c                       Blocking AS60x commands
-├── as608_transaction.h           Internal blocking transaction interface
-├── as608_transaction.c           Blocking framed TX/RX, timeout and recovery
-├── as608_packet.h                Internal packet framing interface
-├── as608_packet.c                Shared header/checksum codec (no UART I/O)
-├── as608_async.h                 Cooperative async API and nonblocking port
-├── as608_async.c                 Async command/packet/stream state machine
-├── test_as608_packet.c           Packet framing tests
-├── test_as608_transaction.c      Blocking transaction/error tests
-├── test_as608_commands.c         Blocking commands and 512/768 B tests
-├── test_as608_async.c            Async ACK/stream/timeout/two-device tests
-├── README.md                     This file, build steps and architecture
-├── docs/
-│   └── adr/
-│       └── 0001-as608-driver-architecture.md
-└── .github/
-    └── workflows/
-        └── c11-host-tests.yml    GitHub Actions: GCC + Clang
+├── as608.h                       Public command API, types and context
+├── as608.c                       Single non-blocking command/transaction FSM
+├── as608_port.h                  Non-blocking UART port contract
+├── as608_packet.h/.c              Internal packet codec and checksum
+├── test_as608_packet.c           Packet tests
+├── test_as608_commands.c         Full command and template regression tests
+├── test_as608_async.c            Cooperative scheduling tests
+├── test_as608_async_faults.c      Partial I/O and fault tests
+├── README.md
+├── docs/adr/0001-as608-driver-architecture.md
+└── .github/workflows/c11-host-tests.yml
 ```
-
-**Flat** means all C and H files, including test sources, live in the
-repository root. The `docs/` and `.github/workflows/` directories are retained
-because they hold documentation and a GitHub Actions workflow (which GitHub
-only recognizes in that location). There are no production stub headers.
 
 ## Architecture and dependency graph
 
 ```text
-                   Application (STM32 / RTOS / Linux)
-                   /                           \
-                  v                             v
-        as608.h + as608.c              as608_async.h + as608_async.c
-             BLOCKING                      COOPERATIVE ASYNC
-                  |                             |
-                  v                             | async port callbacks
-  as608_transaction.h/.c                       v
-                  |                    Platform-owned UART TX/RX queues
-                  |                             |
-                  +--------------+--------------+
-                                 |
-                       as608_packet.h/.c
-                    Shared packet codec/checksum
+Application (main loop / task)
+              |
+              v
+         as608.h / as608.c
+        start / process / result
+              |
+      +-------+-------------------+
+      |                           |
+      v                           v
+as608_packet.h/.c           as608_port.h (contract)
+encode/decode/checksum            |
+                                  v
+                          Platform UART adapter
+                          TX queue / RX ring / clock
+                                  |
+                                  v
+                           UART / AS608 sensor
 ```
 
-The two engines **share the packet codec and AS60x type definitions**, but have
-different port contracts. Use only **one engine on a given physical sensor/UART
-at a time**. They must never race for the same sensor or consume each other's
-ACKs. Two independent sensors can be processed with two async contexts.
-
-The packet codec supports `0xEF01` start, 32-bit address, frame kind,
-16-bit payload+checksum length and the additive 16-bit checksum. The
-transaction layer is responsible for deadlines and quarantine, while the
-command layer interprets ACK codes and maintains template operations.
-
-### Blocking control flow
+The packet codec is pure software; the port does not depend on it.
+There is one command/transaction engine and one port contract, not parallel
+engines. A job owns its context until completion or quarantine.
 
 ```text
-application → as608_read_template(...)
-            → PS_LoadChar → ACK → PS_UpChar → ACK
-            → DATA ... END_DATA → result
+start -> BUSY -> TX -> RX_HEADER -> RX_BODY -> verify -> next phase
+                    ^                                 |
+                    +---------------------------------+
+       Final download DATA -> TX_DRAIN -> finish or STORE command
+       Valid final response -> DONE
+       Timeout / malformed reply / I/O error / abort -> DESYNCHRONIZED
 ```
 
-The blocking port may wait for bytes. It was exercised on real sensors;
-retaining it is intentional while the async port is being validated.
+## API and platform port
 
-### Cooperative async control flow
+Initialize a zeroed `as608_t` with `as608_config_t`. Supply
+`port.try_write`, `port.try_read`, `port.tx_idle`, `port.clock_ms` and
+`port.user`. Each start call returns admission status, not the sensor ACK.
+Each process call performs at most one transport callback (plus a clock read).
+The application must schedule process while BUSY; no function waits for UART.
 
-```text
-start(...) ────→ BUSY
-                 |
-                 v
-          process(): one nonblocking port I/O attempt
-                 |
-                 +─ TX frame partial / RX header partial / RX payload partial
-                 |                       |
-                 |                       v
-                 |                  checksum verify
-                 |                       |
-                 |        next command or DATA ... END_DATA
-                 |                       |
-                 +── PENDING             +── DONE / DESYNCHRONIZED
-```
+- try_write copies accepted bytes into an owned, ordered TX queue.
+- try_read consumes available RX bytes; zero is normal backpressure/empty.
+- tx_idle returns 1 only after the queue is empty and physical UART TX
+  completes (TC, not merely DMA completion); 0 while pending, negative on error.
+- clock_ms is monotonic modulo 2^32. Timeout covers the whole job.
+- Report UART errors and dropped bytes through the port. Do not silently flush.
 
-`as608_async_process()` must run frequently; it invokes at most **one**
-`try_read` or `try_write` callback per invocation and does not wait for UART.
-The port's `try_write` must **copy** all accepted bytes into its own ordered
-TX queue; returning a count while borrowing a DMA pointer that can change is
-not allowed. `try_read` consumes bytes from an RX queue; UART errors, overflow
-or dropped bytes must surface as a port error. Partial transfers and zero
-progress are expected, not faults.
-
-Timeout covers the **whole operation**, including every packet. Unexpected
-reply, checksum error, timeout, I/O failure or abort quarantines the context:
-a verified physical sensor reset and UART RX/TX queue cleanup are required
-before any fresh operation. Reinitializing software alone is not recovery.
-
-### Async API example
+All previous sensor commands now use `as608_*_start()`: password, parameters,
+count, index, information page, capture, character generation, match, model,
+search, load, upload, download, store, read/write template, delete, empty.
+For example:
 
 ```c
-static as608_async_t sensor;
-static uint8_t raw_template[AS608_TEMPLATE_MAX_BYTES];
-static as608_template_buffer_t rx = {
-    .data = raw_template, .capacity = sizeof(raw_template), .length = 0U
-};
+static as608_t sensor;
+static uint8_t model[AS608_TEMPLATE_MAX_BYTES];
+static as608_template_buffer_t output = {model, sizeof(model), 0U};
 
-/* Initialize once with platform nonblocking callbacks in cfg. */
-as608_async_init(&sensor, &cfg);
-as608_async_read_template_start(&sensor, 1U, &rx);
+/* cfg supplies the application-owned UART callbacks. */
+if (as608_init(&sensor, &cfg) == AS608_STATUS_OK) {
+    (void)as608_read_template_start(&sensor, 1U, &output);
+}
 
-for (;;) {
-    const as608_async_progress_t progress = as608_async_process(&sensor);
-    if (progress == AS608_ASYNC_COMPLETE) {
+/* Call from the scheduler, interleaved with other work. */
+if (sensor.state == AS608_STATE_BUSY) {
+    const as608_progress_t progress = as608_process(&sensor);
+    if (progress != AS608_PENDING) {
         as608_result_t result;
-        if (as608_async_get_result(&sensor, &result) &&
+        if (as608_get_result(&sensor, &result) &&
             result.status == AS608_STATUS_OK &&
             result.confirmation == AS608_ACK_OK) {
-            /* rx.length is 512 or 768 bytes (on supported firmware). */
+            /* output.length is the verified actual byte count. */
         }
-        break;
     }
-    if (progress == AS608_ASYNC_FAILED) {
-        /* Quarantined on transport/protocol failure: arrange recovery. */
-        break;
-    }
-    /* Do unrelated work; do NOT busy-loop on process() in production. */
 }
 ```
 
-Do not copy this loop verbatim into the production scheduling design; call
-`as608_async_process` from the application scheduler or main superloop,
-interleaved with other work. Keep `raw_template` valid throughout the transfer.
+A valid negative sensor ACK completes the job without quarantining the link.
+For transport/protocol failure or abort, arrange physical reset/power cycle,
+wait for boot without blocking the scheduler, stop/purge old TX/RX and clear
+errors. Only when the platform guarantees a fresh physical epoch may it call
+`as608_confirm_reset()`. This function does not perform hardware recovery.
+Never assume a timed-out flash operation had no effect.
 
-## Host build and test (from repository root)
+Template sizes supported: 512 and 768 bytes; actual length is returned only
+on success. A standalone DownChar completes when TX drains, not on an invented
+sensor confirmation. A combined write additionally waits for StoreChar ACK.
+Template interoperability across firmware variants is not guaranteed.
+
+## Build and test
+
+Add `as608.c` and `as608_packet.c` to the Keil project and include the root.
+Do not link host test files (each contains a main). Supply the platform port;
+STM32 HAL IT/DMA integration is not yet provided.
 
 ```sh
 mkdir -p build
-cc -std=c11 -Wall -Wextra -Werror -pedantic -I. \
-  as608_packet.c test_as608_packet.c -o build/test_packet
-cc -std=c11 -Wall -Wextra -Werror -pedantic -I. \
-  as608_packet.c as608_transaction.c test_as608_transaction.c \
-  -o build/test_transaction
-cc -std=c11 -Wall -Wextra -Werror -pedantic -I. \
-  as608_packet.c as608_transaction.c as608.c test_as608_commands.c \
-  -o build/test_commands
-cc -std=c11 -Wall -Wextra -Werror -pedantic -I. \
-  as608_packet.c as608_async.c test_as608_async.c -o build/test_async
-./build/test_packet
-./build/test_transaction
-./build/test_commands
-./build/test_async
+for suite in packet commands async async_faults; do
+  cc -std=c11 -Wall -Wextra -Werror -pedantic -I. as608_packet.c as608.c test_as608_${suite}.c -o build/test_${suite}
+  ./build/test_${suite}
+done
 ```
 
-For Keil, add the production `.c` files from the root and set the root as
-the include search path. **Do not add `test_as608_*.c` to the target build**:
-those contain host test `main()` functions. Use the existing blocking
-functions or the new async entry points; async requires a platform-specific
-nonblocking port, not the old blocking UART callbacks.
+## Migration
 
-## Template sizes and compatibility
-
-The referenced AS60x manual describes **512 bytes**, while the tested
-AS608_QCCF firmware emitted **768 bytes** (six 128-byte data fragments,
-final fragment marked END_DATA). Importing this opaque 768-byte model into
-the second tested module and matching the original finger succeeded.
-
-`AS608_TEMPLATE_MAX_BYTES` is the allocation bound; the actual number of
-bytes is returned in `as608_template_buffer_t.length` after successful upload.
-Never send the buffer's capacity in place of the actual length. Compatibility
-is **not** guaranteed across arbitrary AS608 firmware variants.
-
-## Remaining work
-
-- STM32F103 HAL IT/DMA nonblocking UART port: TX queue ownership, RX ring,
-  overflow detection, UART error propagation and physical recovery.
-- More async commands: Search/Match/Enrollment/Delete and other command set.
-- Target integration and real-sensor regression including 768-byte transfer,
-  independently scheduled USART1/USART2, late ACK, reset and power cycling.
-- Confirm host CI results before calling async validated for production.
-
-Protocol and architectural decisions: [ADR-0001](docs/adr/0001-as608-driver-architecture.md).
+This is an intentional breaking API change. Replace old synchronous calls and
+`as608_async_*` names with `as608_*_start()`, `as608_process()`,
+`as608_get_result()`; use the single `as608_t` and `as608_config_t`.
+Historical source and hardware baseline are available in Git history.

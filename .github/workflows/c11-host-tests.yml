@@ -14,37 +14,11 @@ jobs:
         compiler: [gcc, clang]
     steps:
       - uses: actions/checkout@v4
-      - name: Build and run packet tests
+      - name: Build and run unified non-blocking tests
         run: |
           set -eu
           mkdir -p build
-          ${{ matrix.compiler }} -std=c11 -Wall -Wextra -Werror -pedantic -I. \
-            as608_packet.c test_as608_packet.c -o build/test_packet
-          ./build/test_packet
-      - name: Build and run transaction tests
-        run: |
-          set -eu
-          ${{ matrix.compiler }} -std=c11 -Wall -Wextra -Werror -pedantic -I. \
-            as608_packet.c as608_transaction.c test_as608_transaction.c \
-            -o build/test_transaction
-          ./build/test_transaction
-      - name: Build and run command tests
-        run: |
-          set -eu
-          ${{ matrix.compiler }} -std=c11 -Wall -Wextra -Werror -pedantic -I. \
-            as608_packet.c as608_transaction.c as608.c \
-            test_as608_commands.c -o build/test_commands
-          ./build/test_commands
-      - name: Build and run async tests
-        run: |
-          set -eu
-          ${{ matrix.compiler }} -std=c11 -Wall -Wextra -Werror -pedantic -I. \
-            as608_packet.c as608_async.c test_as608_async.c -o build/test_async
-          ./build/test_async
-      - name: Build and run async UART fault tests
-        run: |
-          set -eu
-          ${{ matrix.compiler }} -std=c11 -Wall -Wextra -Werror -pedantic -I. \
-            as608_packet.c as608_async.c test_as608_async_faults.c \
-            -o build/test_async_faults
-          ./build/test_async_faults
+          for suite in packet commands async async_faults; do
+            ${{ matrix.compiler }} -std=c11 -Wall -Wextra -Werror -pedantic -I. as608_packet.c as608.c test_as608_${suite}.c -o build/test_${suite}
+            ./build/test_${suite}
+          done

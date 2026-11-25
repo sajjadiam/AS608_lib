@@ -2,7 +2,7 @@
  * @file as608.h
  * @brief Public API for AS608/AS60x UART fingerprint modules.
  * @details
- * ISO C11, blocking, caller-owned memory, no heap allocation, no HAL/RTOS
+ * ISO C11, cooperative non-blocking, caller-owned memory, no heap allocation, no HAL/RTOS
  * dependency. The reference chip is AS608_QCCF; the firmware's AS60x command
  * support and template interoperability must be validated per module.
  *
@@ -11,6 +11,7 @@
 #ifndef AS608_H
 #define AS608_H
 
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 #include "as608_port.h"
@@ -50,7 +51,8 @@ typedef enum {
     AS608_STATUS_FRAME_ERROR,     /**< Invalid frame header, address or length. */
     AS608_STATUS_CHECKSUM_ERROR,  /**< Received frame checksum is invalid. */
     AS608_STATUS_UNEXPECTED_REPLY, /**< Unexpected packet kind or payload size. */
-    AS608_STATUS_RECOVERY_REQUIRED /**< An earlier transaction left the link uncertain. */
+    AS608_STATUS_RECOVERY_REQUIRED, /**< An earlier transaction left the link uncertain. */
+    AS608_STATUS_BUSY /**< Another operation owns this context. */
 } as608_status_t;
 
 /**
@@ -161,254 +163,124 @@ typedef struct {
     as608_match_t match;        /**< [out] Valid only following successful match. */
 } as608_search_t;
 
-/** @brief Configuration passed to @ref as608_init. */
+/** @brief Transport and timeout configuration, copied by as608_init(). */
 typedef struct {
-    as608_port_t port;     /**< Caller-defined UART and clock callbacks. */
-    uint32_t device_address; /**< Protocol address; often AS608_DEFAULT_ADDRESS. */
-    uint32_t timeout_ms; /**< Per-command total budget: 1..AS608_MAX_TIMEOUT_MS. */
+    as608_port_t port;
+    uint32_t device_address;
+    uint32_t timeout_ms;
 } as608_config_t;
 
-/**
- * @brief Lifecycle and communication synchronization state.
- * @details Values are internal driver state, not AS60x wire values.
- * An all-zero context has state AS608_STATE_UNINITIALIZED.
- */
 typedef enum {
-    AS608_STATE_UNINITIALIZED = 0, /**< No valid initialization performed. */
-    AS608_STATE_READY,             /**< Ready for blocking transactions. */
-    AS608_STATE_DESYNCHRONIZED     /**< Quarantined until physical recovery. */
+    AS608_STATE_UNINITIALIZED = 0,
+    AS608_STATE_IDLE,
+    AS608_STATE_BUSY,
+    AS608_STATE_DONE,
+    AS608_STATE_DESYNCHRONIZED
 } as608_state_t;
 
-/**
- * @brief Caller-owned device context; no dynamic allocation.
- * @warning Do not concurrently operate on, modify, or copy an active context.
- * @warning Zero-initialize storage before first use (e.g. as608_t dev = {0}).
- * @warning Initialization assumes a known-clean sensor startup. Calling
- *          as608_init again must not bypass DESYNCHRONIZED; use as608_recover.
+typedef enum {
+    AS608_PENDING = 0,
+    AS608_COMPLETE, /**< A validated sensor response or completed data transfer. */
+    AS608_FAILED    /**< Host-side error; inspect the result. */
+} as608_progress_t;
+
+/** @brief Caller-owned context; fields are private to the driver.
+ * Zero-initialize before init. Do not copy or modify during operation.
+ * All calls on a context are serialized by the application.
  */
 typedef struct {
-    as608_config_t config; /**< Copy of initialization configuration. */
-    as608_state_t state;   /**< Driver-owned lifecycle/link state. */
+    as608_config_t config;
+    as608_state_t state;
+    as608_result_t result;
+    uint32_t started_ms;
+    uint8_t step;
+    uint8_t wire_phase;
+    uint8_t tx_frame[267U];
+    size_t tx_len;
+    size_t tx_pos;
+    uint8_t rx_header[9U];
+    size_t rx_header_pos;
+    uint8_t rx_body[258U];
+    size_t rx_body_len;
+    size_t rx_body_pos;
+    uint8_t rx_kind;
+    size_t rx_payload_len;
+    uint16_t page_id;
+    uint16_t chunk_size;
+    as608_char_buffer_t download_buffer;
+    bool store_after_download;
+    const uint8_t *input;
+    size_t input_length;
+    size_t input_offset;
+    uint8_t *stream_data;
+    size_t stream_capacity;
+    size_t stream_offset;
+    size_t *stream_length;
+    void *reply_output;
 } as608_t;
 
-/**
- * @brief Initialize the context without accessing the hardware.
- * @param[out] dev Caller-owned context.
- * @param[in] config Valid transport, address and nonzero timeout configuration.
- * @return Host-side status; no device confirmation code.
+/** @brief Initialize a zeroed context without accessing UART. */
+as608_status_t as608_init(as608_t *ctx, const as608_config_t *config);
+
+/** @brief Advance one bounded transport operation; never wait for UART.
+ * @note Call only for a started job, in a serialized scheduler.
  */
-as608_status_t as608_init(as608_t *dev, const as608_config_t *config);
+as608_progress_t as608_process(as608_t *ctx);
+
+/** @brief Copy the terminal result; false before a job terminates.
+ * COMPLETE does not imply ACK_OK. Check both status and confirmation.
+ */
+bool as608_get_result(const as608_t *ctx, as608_result_t *result);
+
+/** @brief Abort an in-flight job and quarantine its link. */
+as608_status_t as608_abort(as608_t *ctx);
+
+/** @brief Acknowledge externally completed physical recovery.
+ * @pre The application has stopped old TX, physically reset/power-cycled
+ * the sensor, waited for boot, and purged all old RX/TX bytes and errors.
+ * This function performs no reset, I/O, delays or verification itself.
+ * Calling without satisfying that precondition is unsafe.
+ */
+as608_status_t as608_confirm_reset(as608_t *ctx);
 
 /**
- * @brief Reestablish a trustworthy sensor/UART communication epoch.
- * @details Invoke the optional as608_port_t.recover callback to reset the
- * physical sensor, wait for boot, abort pending TX and clear the complete
- * UART RX pipeline. This is not a protocol command or an automatic retry.
- * @param[in,out] dev Initialized device context.
- * @retval AS608_STATUS_OK The port confirmed a fresh link epoch.
- * @retval AS608_STATUS_RECOVERY_REQUIRED No recovery callback is available.
- * @retval AS608_STATUS_IO_ERROR The recovery callback failed.
- * @retval AS608_STATUS_TIMEOUT Recovery exceeded the timeout budget.
- * @note Reinitializing the context without a physical reset is not recovery.
- * @warning A timed-out flash update can have an uncertain commit outcome;
- *          reconcile affected PageIDs before retrying destructive commands.
+ * @brief Start functions: return admission status, never wait for a reply.
+ * @details The single operation-wide timeout begins on successful start.
+ * Keep all pointed-to inputs (immutable) and output storage valid until
+ * completion or abort. Output scalars and template length change only on
+ * successful ACK/stream; stream bytes may be partially modified on failure.
+ * Poll as608_process(), then use as608_get_result(). No automatic retries.
  */
-as608_status_t as608_recover(as608_t *dev);
-
-/**
- * @brief Verify access password using PS_VfyPwd (0x13).
- * @param[in,out] dev Initialized device.
- * @param[in] password Device password (not stored in context).
- * @return Transaction status and device confirmation.
- */
-as608_result_t as608_verify_password(as608_t *dev, uint32_t password);
-
-/**
- * @brief Read parameters using PS_ReadSysPara (0x0F).
- * @param[in,out] dev Initialized device.
- * @param[out] out Decoded parameters; unchanged unless command succeeds.
- * @return Transaction status and device confirmation.
- */
-as608_result_t as608_read_parameters(as608_t *dev, as608_parameters_t *out);
-
-/**
- * @brief Count stored templates using PS_ValidTempleteNum (0x1D).
- * @param[in,out] dev Initialized device.
- * @param[out] count Occupied slot count; unchanged unless command succeeds.
- * @return Transaction status and device confirmation.
- */
-as608_result_t as608_get_template_count(as608_t *dev, uint16_t *count);
-
-/**
- * @brief Read a 32-byte occupancy bitmap from PS_ReadIndexTable (0x1F).
- * @param[in,out] dev Initialized device context.
- * @param[in] index_page Index-table page number (256 template slots per page).
- * @param[out] bitmap Destination for 32 occupancy bytes.
- * @param[in] capacity Destination capacity; must be at least 32 bytes.
- * @return Host transaction status and raw sensor confirmation.
- * @warning Availability is firmware-dependent; verify on the target AS608_QCCF.
- * @note bitmap is unchanged unless the command succeeds.
- */
-as608_result_t as608_read_index_table(as608_t *dev, uint8_t index_page, uint8_t *bitmap, size_t capacity);
-
-/**
- * @brief Read the raw 512-byte information page via PS_ReadINFpage (0x16).
- * @param[in,out] dev Initialized device.
- * @param[out] data Caller-owned destination, may be partially modified on error.
- * @param[in] capacity Available bytes in data; must be >= AS608_INFORMATION_PAGE_BYTES.
- * @return Transaction status and device confirmation.
- * @warning This page may contain sensitive settings. Do not dump it to logs.
- */
-as608_result_t as608_read_information_page(as608_t *dev, uint8_t *data, size_t capacity);
-
-/**
- * @brief Capture an image into the sensor's ImageBuffer (PS_GetImage, 0x01).
- * @param[in,out] dev Initialized device.
- * @return Transaction status and device confirmation.
- */
-as608_result_t as608_capture_image(as608_t *dev);
-
-/**
- * @brief Extract a feature file into a character buffer (PS_GenChar, 0x02).
- * @param[in,out] dev Initialized device.
- * @param[in] buffer Buffer 1 or 2.
- * @return Transaction status and device confirmation.
- */
-as608_result_t as608_generate_character(as608_t *dev, as608_char_buffer_t buffer);
-
-/**
- * @brief Compare CharBuffer1 and CharBuffer2 (PS_Match, 0x03).
- * @param[in,out] dev Initialized device.
- * @param[out] score Score; unchanged unless both result fields indicate success.
- * @return Transaction status and device confirmation.
- */
-as608_result_t as608_match_buffers(as608_t *dev, uint16_t *score);
-
-/**
- * @brief Combine the two feature buffers into a model (PS_RegModel, 0x05).
- * @param[in,out] dev Initialized device.
- * @return Transaction status and device confirmation.
- */
-as608_result_t as608_create_model(as608_t *dev);
-
-/**
- * @brief Search a template range (PS_Search, 0x04).
- * @param[in,out] dev Initialized device.
- * @param[in,out] search Search parameters and successful match output.
- * @return Transaction status and raw device confirmation (0x09 if not found).
- * @pre search->page_count != 0; search->buffer is 1 or 2.
- * @note The scanned half-open range is [start_page, start_page + page_count).
- *       Arithmetic must be widened and checked against reported capacity.
- * @note search->match is unchanged when there is no successful match.
- */
-as608_result_t as608_search(as608_t *dev, as608_search_t *search);
-
-/**
- * @brief Load a database template into CharBuffer1/2 (PS_LoadChar, 0x07).
- * @param[in,out] dev Initialized device.
- * @param[in] buffer Target character buffer.
- * @param[in] page_id Existing database position.
- * @return Transaction status and device confirmation.
- */
-as608_result_t as608_load_template(as608_t *dev, as608_char_buffer_t buffer, uint16_t page_id);
-
-/**
- * @brief Upload an opaque model from CharBuffer1/2 (PS_UpChar, 0x08).
- * @param[in,out] dev Initialized device.
- * @param[in] buffer Source character buffer containing a complete model.
- * @param[in,out] output Caller-owned storage; capacity >= 512 bytes.
- * @return Host status and sensor confirmation.
- * @details Receives DATA until a validated END_DATA; accepts exactly 512 or
- * 768 template bytes. On success output->length is the actual received length.
- * On failure length remains unchanged and data may be partially overwritten.
- * @warning An undersized buffer quarantines the link; do not retry without
- * physical recovery. Upload does not establish cross-firmware compatibility.
- */
-as608_result_t as608_upload_template(as608_t *dev, as608_char_buffer_t buffer, as608_template_buffer_t *output);
-
-/**
- * @brief Transfer an opaque model to a sensor buffer (PS_DownChar, 0x09).
- * @param[in,out] dev Initialized device.
- * @param[in] buffer Destination character buffer.
- * @param[in] data Complete model bytes.
- * @param[in] length Actual model length (512 or 768 bytes).
- * @return Transaction status and device confirmation.
- * @warning Pass the exact source length, not the destination capacity.
- * ACK success does not prove cross-module matching compatibility.
- */
-as608_result_t as608_download_template(as608_t *dev, as608_char_buffer_t buffer, const uint8_t *data, size_t length);
-
-/**
- * @brief Store a buffered model in flash (PS_StoreChar, 0x06).
- * @param[in,out] dev Initialized device.
- * @param[in] buffer Source character buffer.
- * @param[in] page_id Destination database position.
- * @return Transaction status and device confirmation.
- * @warning May overwrite an existing enrollment.
- */
-as608_result_t as608_store_template(as608_t *dev, as608_char_buffer_t buffer, uint16_t page_id);
-
-/**
- * @brief Load and upload a database template (LoadChar, then UpChar).
- * @details Uses CharBuffer1 and one total deadline for both commands and
- * stream packets. END_DATA, not buffer fullness, ends a valid stream.
- * @param[in,out] dev Initialized device.
- * @param[in] page_id Database slot, not an intrinsic template ID.
- * @param[in,out] output Destination and actual-length output.
- * @return Status/confirmation of the failing step, or successful completion.
- * @note On success output->length is 512 or 768 bytes. On failure length
- * is unchanged, data may be partially overwritten, and the link may require
- * recovery. CharBuffer1 is overwritten on a successful LoadChar.
- */
-as608_result_t as608_read_template(as608_t *dev, uint16_t page_id, as608_template_buffer_t *output);
-
-/**
- * @brief Import and store a template in a specified database slot.
- * @details
- * Convenience operation: PS_DownChar (0x09), then PS_StoreChar (0x06),
- * using CharBuffer1. All packets and both commands share one overall
- * transaction deadline. The caller explicitly chooses the same page_id
- * on each device when synchronizing database-slot assignments.
- *
- * @param[in,out] dev Initialized device context.
- * @param[in] page_id Destination database slot.
- * @param[in] data Complete, opaque template from a compatible module.
- * @param[in] length Actual template size (512 or 768 bytes), NOT capacity.
- * @return Host status and device confirmation of the failing step,
- *         or successful completion of both steps.
- *
- * @pre data != NULL and length is AS608_TEMPLATE_512_BYTES or AS608_TEMPLATE_768_BYTES.
- * @warning CharBuffer1 is overwritten; an occupied page_id may be replaced.
- * @warning This operation is not atomic: a failure after DownChar may leave
- *          the buffer changed, while StoreChar may fail or complete
- *          ambiguously after a transport timeout.
- * @note Transfer and store success do not prove that the template is
- *       compatible with the destination firmware's matching algorithm.
- * @note No slot allocation, cross-device synchronization or rollback
- *       is performed by this function.
- */
-as608_result_t as608_write_template(as608_t *dev, uint16_t page_id, const uint8_t *data, size_t length);
-
-/**
- * @brief Delete consecutive templates (PS_DeletChar, 0x0C).
- * @param[in,out] dev Initialized device.
- * @param[in] start_page First position to erase.
- * @param[in] page_count Number of positions, greater than zero.
- * @return Transaction status and device confirmation.
- * @warning Destructive command.
- */
-as608_result_t as608_delete_templates(as608_t *dev, uint16_t start_page, uint16_t page_count);
-
-/**
- * @brief Erase all enrolled templates (PS_Empty, 0x0D).
- * @param[in,out] dev Initialized device.
- * @return Transaction status and device confirmation.
- * @warning Irreversible destructive command.
- */
-as608_result_t as608_empty_database(as608_t *dev);
+as608_status_t as608_verify_password_start(as608_t *ctx, uint32_t password);
+as608_status_t as608_read_parameters_start(as608_t *ctx, as608_parameters_t *out);
+as608_status_t as608_get_template_count_start(as608_t *ctx, uint16_t *count);
+as608_status_t as608_read_index_table_start(as608_t *ctx, uint8_t index_page,
+                                         uint8_t *bitmap, size_t capacity);
+as608_status_t as608_read_information_page_start(as608_t *ctx, uint8_t *data,
+                                               size_t capacity);
+as608_status_t as608_capture_image_start(as608_t *ctx);
+as608_status_t as608_generate_character_start(as608_t *ctx,
+                                             as608_char_buffer_t buffer);
+as608_status_t as608_match_buffers_start(as608_t *ctx, uint16_t *score);
+as608_status_t as608_create_model_start(as608_t *ctx);
+as608_status_t as608_search_start(as608_t *ctx, as608_search_t *search);
+as608_status_t as608_load_template_start(as608_t *ctx, as608_char_buffer_t buffer,
+                                       uint16_t page_id);
+as608_status_t as608_upload_template_start(as608_t *ctx, as608_char_buffer_t buffer,
+                                         as608_template_buffer_t *output);
+as608_status_t as608_download_template_start(as608_t *ctx, as608_char_buffer_t buffer,
+                                           const uint8_t *data, size_t length);
+as608_status_t as608_store_template_start(as608_t *ctx, as608_char_buffer_t buffer,
+                                        uint16_t page_id);
+as608_status_t as608_read_template_start(as608_t *ctx, uint16_t page_id,
+                                       as608_template_buffer_t *output);
+as608_status_t as608_write_template_start(as608_t *ctx, uint16_t page_id,
+                                        const uint8_t *data, size_t length);
+as608_status_t as608_delete_templates_start(as608_t *ctx, uint16_t start_page,
+                                          uint16_t page_count);
+as608_status_t as608_empty_database_start(as608_t *ctx);
 
 #ifdef __cplusplus
 }
 #endif
-
 #endif /* AS608_H */
