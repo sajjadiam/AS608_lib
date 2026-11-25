@@ -51,3 +51,5 @@ jobs:
           ./build/test_generate_character
           ${{ matrix.compiler }} -std=c11 -Wall -Wextra -Werror -pedantic -I. as608_packet.c as608_transaction.c as608.c test_as608_match_buffers.c -o build/test_match_buffers
           ./build/test_match_buffers
+          ${{ matrix.compiler }} -std=c11 -Wall -Wextra -Werror -pedantic -I. as608_packet.c as608_transaction.c as608.c test_as608_create_model.c -o build/test_create_model
+          ./build/test_create_model

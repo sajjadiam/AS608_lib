@@ -586,11 +586,43 @@ as608_status_t as608_generate_character_start(as608_t *ctx, as608_char_buffer_t 
  */
 as608_status_t as608_match_buffers_start(as608_t *ctx, uint16_t *score);
 
-/* Incremental rebuild: APIs 01–13 are defined.
+/**
+ * @brief Start merging two fingerprint features into a model (PS_RegModel, 0x05).
+ *
+ * @details Requests sensor-side merging of the features in CharBuffer1
+ * and CharBuffer2. On success, the generated model is stored in both
+ * character buffers. The command takes no arguments and returns a
+ * one-byte confirmation ACK. It does not write the flash database.
+ *
+ * @param[in,out] ctx Initialized caller-owned device context.
+ * @retval AS608_STATUS_OK Job admitted; model creation not yet confirmed.
+ * @retval AS608_STATUS_INVALID_ARG Null context.
+ * @retval AS608_STATUS_NOT_INITIALIZED Context is not initialized.
+ * @retval AS608_STATUS_BUSY Another job owns the context.
+ * @retval AS608_STATUS_RECOVERY_REQUIRED Link is quarantined.
+ * @pre Calls sharing ctx must be serialized. Both character buffers
+ * must contain valid features from the same finger for successful merging.
+ * The driver does not track sensor-side buffer validity or finger identity.
+ * @post On admission, state is BUSY and the job deadline starts.
+ * Rejected admission leaves the context and previous result unchanged.
+ * @note Check both terminal result fields. AS608_ACK_OK (0x00) means
+ * merging succeeded, AS608_ACK_PACKET_ERROR (0x01) indicates a sensor
+ * packet error, and AS608_ACK_MERGE_ERROR (0x0A) indicates merge failure.
+ * A negative ACK is a terminal sensor result, not a host transport fault.
+ * Do not assume either buffer contains a newly generated model after failure.
+ * No implicit capture, match, retry or flash storage is performed.
+ * @see as608_generate_character_start
+ * @see as608_store_template_start
+ * @see as608_process
+ * @see as608_get_result
+ * @see AS60x Communication Manual V1.0, printed page 15.
+ */
+as608_status_t as608_create_model_start(as608_t *ctx);
+
+/* Incremental rebuild: APIs 01–14 are defined.
  * The following API declarations remain contracts until restored.
  * See FEATURES.md.
  */
-as608_status_t as608_create_model_start(as608_t *ctx);
 as608_status_t as608_search_start(as608_t *ctx, as608_search_t *search);
 as608_status_t as608_load_template_start(as608_t *ctx, as608_char_buffer_t buffer,
                                        uint16_t page_id);
