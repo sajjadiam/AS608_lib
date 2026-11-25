@@ -14,6 +14,7 @@ AS608_lib/
 ├── as608.c                       Command FSM and public job lifecycle
 ├── as608_transaction.h/.c         Internal non-blocking packet transport
 ├── as608_port.h                  Non-blocking UART port contract
+├── as608_types.h                 Shared status and transport constants
 ├── as608_packet.h/.c              Internal packet codec and checksum
 ├── test_as608_transaction.c      Independent transport tests
 ├── test_as608_packet.c           Packet tests
@@ -55,7 +56,30 @@ The packet codec is pure software; the port does not depend on it.
 The command layer owns command sequencing, ACK semantics and job lifecycle.
 The transaction layer owns partial packet I/O, checksum validation and the
 single job deadline; it returns SENT, RECEIVED, DRAINED or FAULT events.
-There is one non-blocking engine and one port contract, not parallel engines. A job owns its context until completion or quarantine.
+There is one non-blocking engine and one port contract, not parallel engines.
+A job owns its context until completion or quarantine.
+
+### Header dependencies and ownership
+
+Arrows denote direct project-header includes (standard C headers omitted):
+
+```text
+as608.h
+  ├── as608_types.h
+  └── as608_transaction.h
+        ├── as608_types.h
+        ├── as608_packet.h ──> as608_types.h
+        └── as608_port.h   ──> as608_types.h
+```
+
+No lower layer includes as608.h. The packet codec does not include the
+transaction or port headers. The command context as608_t embeds an
+as608_transaction_t by value. The transport context owns its single copy
+of as608_config_t, the deadline, wire phase, and packet buffers. The
+command context owns only command/job state and caller buffer references.
+Transport functions accept as608_transaction_t*, never as608_t*.
+Headers expose storage layouts to permit static allocation in ISO C;
+their internal fields and transport entry points are not public application API.
 
 ```text
 start -> BUSY -> TX -> RX_HEADER -> RX_BODY -> verify -> next phase
@@ -130,7 +154,11 @@ STM32 HAL IT/DMA integration is not yet provided.
 
 ```sh
 mkdir -p build
-for suite in packet transaction commands async async_faults; do
+cc -std=c11 -Wall -Wextra -Werror -pedantic -I. as608_packet.c test_as608_packet.c -o build/test_packet
+./build/test_packet
+cc -std=c11 -Wall -Wextra -Werror -pedantic -I. as608_packet.c as608_transaction.c test_as608_transaction.c -o build/test_transaction
+./build/test_transaction
+for suite in commands async async_faults; do
   cc -std=c11 -Wall -Wextra -Werror -pedantic -I. as608_packet.c as608_transaction.c as608.c test_as608_${suite}.c -o build/test_${suite}
   ./build/test_${suite}
 done

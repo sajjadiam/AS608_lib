@@ -23,7 +23,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include "as608.h"
+#include "as608_types.h"
 
 #ifdef __cplusplus
 extern "C" {

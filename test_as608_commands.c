@@ -49,15 +49,20 @@ static uint32_t mock_ms(void *user)
     return ((mock_t *)user)->now;
 }
 
-static void setup(as608_t *dev, mock_t *m)
+static void setup_timeout(as608_t *dev, mock_t *m, uint32_t timeout_ms)
 {
     const as608_config_t cfg = {
         .port = {.user = m, .try_write = mock_write, .try_read = mock_read, .tx_idle = mock_tx_idle,
                  .clock_ms = mock_ms},
-        .device_address = AS608_DEFAULT_ADDRESS, .timeout_ms = 10000U
+        .device_address = AS608_DEFAULT_ADDRESS, .timeout_ms = timeout_ms
     };
     *dev = (as608_t){0};
     assert(as608_init(dev, &cfg) == AS608_STATUS_OK);
+}
+
+static void setup(as608_t *dev, mock_t *m)
+{
+    setup_timeout(dev, m, 10000U);
 }
 
 static void append_frame(mock_t *m, uint8_t kind,
@@ -317,7 +322,7 @@ static void test_blob_timeout_and_index_capacity(void)
 {
     mock_t m = {.split = 64U};
     as608_t dev;
-    setup(&dev, &m);
+    setup_timeout(&dev, &m, 30U);
 
     uint8_t bitmap[32U];
     (void)memset(bitmap, 0xA5, sizeof(bitmap));
@@ -343,7 +348,6 @@ static void test_blob_timeout_and_index_capacity(void)
     ack(&m, AS608_ACK_OK, NULL, 0U);
     const uint8_t segment[4] = {1U, 2U, 3U, 4U};
     append_frame(&m, AS608_PACKET_DATA, segment, sizeof(segment));
-    dev.config.timeout_ms = 30U;
     uint8_t output[AS608_TEMPLATE_MAX_BYTES] = {0};
     as608_template_buffer_t blob = {output, sizeof(output), 73U};
     const as608_result_t result = await_result(&dev, as608_upload_template_start(

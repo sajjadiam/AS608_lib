@@ -14,14 +14,13 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
-#include "as608_port.h"
+#include "as608_types.h"
+#include "as608_transaction.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-/** @brief Factory-default AS60x packet address; not a unique serial number. */
-#define AS608_DEFAULT_ADDRESS UINT32_C(0xFFFFFFFF)
 /** @brief Documented AS60x template size (Communication Manual v1.0, p. 6). */
 #define AS608_TEMPLATE_512_BYTES ((size_t)512U)
 /** @brief Template stream size verified on the two tested AS608_QCCF modules. */
@@ -34,27 +33,6 @@ extern "C" {
 #define AS608_TEMPLATE_BYTES AS608_TEMPLATE_MAX_BYTES
 /** @brief Size of the flash information page returned by ReadINFpage. */
 #define AS608_INFORMATION_PAGE_BYTES ((size_t)512U)
-/** @brief Maximum whole-transaction timeout for wrap-safe uint32_t ticks. */
-#define AS608_MAX_TIMEOUT_MS UINT32_C(0x7FFFFFFF)
-
-/**
- * @brief Host-side transaction status; never contains a sensor ACK code.
- * @note AS608_STATUS_OK means a syntactically valid response was received,
- *       not necessarily that the sensor executed the command successfully.
- */
-typedef enum {
-    AS608_STATUS_OK = 0,          /**< A valid response was received. */
-    AS608_STATUS_INVALID_ARG,     /**< Caller supplied an invalid argument. */
-    AS608_STATUS_NOT_INITIALIZED, /**< Device context is not initialized. */
-    AS608_STATUS_IO_ERROR,        /**< Platform transport reported an error. */
-    AS608_STATUS_TIMEOUT,         /**< Overall transaction deadline expired. */
-    AS608_STATUS_FRAME_ERROR,     /**< Invalid frame header, address or length. */
-    AS608_STATUS_CHECKSUM_ERROR,  /**< Received frame checksum is invalid. */
-    AS608_STATUS_UNEXPECTED_REPLY, /**< Unexpected packet kind or payload size. */
-    AS608_STATUS_RECOVERY_REQUIRED, /**< An earlier transaction left the link uncertain. */
-    AS608_STATUS_BUSY /**< Another operation owns this context. */
-} as608_status_t;
-
 /**
  * @brief AS60x device confirmation codes (wire values, not ordinal values).
  * @details From the AS60x communication manual, confirmation-code table.
@@ -163,13 +141,6 @@ typedef struct {
     as608_match_t match;        /**< [out] Valid only following successful match. */
 } as608_search_t;
 
-/** @brief Transport and timeout configuration, copied by as608_init(). */
-typedef struct {
-    as608_port_t port;
-    uint32_t device_address;
-    uint32_t timeout_ms;
-} as608_config_t;
-
 typedef enum {
     AS608_STATE_UNINITIALIZED = 0,
     AS608_STATE_IDLE,
@@ -184,33 +155,15 @@ typedef enum {
     AS608_FAILED    /**< Host-side error; inspect the result. */
 } as608_progress_t;
 
-/** @brief Internal transport storage; owned by the enclosing device. */
-typedef struct {
-    uint32_t started_ms;
-    uint8_t wire_phase;
-    uint8_t tx_frame[267U];
-    size_t tx_len;
-    size_t tx_pos;
-    uint8_t rx_header[9U];
-    size_t rx_header_pos;
-    uint8_t rx_body[258U];
-    size_t rx_body_len;
-    size_t rx_body_pos;
-    uint8_t rx_kind;
-    size_t rx_payload_len;
-    size_t rx_limit;
-} as608_transaction_storage_t;
-
 /** @brief Caller-owned context; fields are private to the driver.
  * Zero-initialize before init. Do not copy or modify during operation.
  * All calls on a context are serialized by the application.
  */
 typedef struct {
-    as608_config_t config;
     as608_state_t state;
     as608_result_t result;
     uint8_t step;
-    as608_transaction_storage_t transaction;
+    as608_transaction_t transaction;
     uint16_t page_id;
     uint16_t chunk_size;
     as608_char_buffer_t download_buffer;

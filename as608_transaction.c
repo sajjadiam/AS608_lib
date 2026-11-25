@@ -5,166 +5,181 @@
 
 enum { WIRE_IDLE = 0, WIRE_TX = 1, WIRE_RX_HEADER, WIRE_RX_BODY, WIRE_TX_DRAIN };
 
-static as608_transaction_result_t event(as608_t *ctx,
+static as608_transaction_result_t event(as608_transaction_t *txn,
                                         as608_transaction_event_t code,
                                         as608_status_t status)
 {
-    if (code != AS608_TXN_PENDING) ctx->transaction.wire_phase = WIRE_IDLE;
+    if (code != AS608_TXN_PENDING) txn->wire_phase = WIRE_IDLE;
     return (as608_transaction_result_t){code, status};
 }
 
-static as608_transaction_result_t pending(as608_t *ctx)
+static as608_transaction_result_t pending(as608_transaction_t *txn)
 {
-    return event(ctx, AS608_TXN_PENDING, AS608_STATUS_OK);
+    return event(txn, AS608_TXN_PENDING, AS608_STATUS_OK);
 }
 
-static as608_transaction_result_t fault(as608_t *ctx, as608_status_t status)
+static as608_transaction_result_t fault(as608_transaction_t *txn, as608_status_t status)
 {
-    return event(ctx, AS608_TXN_FAULT, status);
+    return event(txn, AS608_TXN_FAULT, status);
 }
 
-void as608_transaction_begin(as608_t *ctx)
+bool as608_transaction_config_valid(const as608_config_t *config)
 {
-    ctx->transaction.started_ms = ctx->config.port.clock_ms(ctx->config.port.user);
+    return config != NULL && config->port.try_read != NULL &&
+           config->port.try_write != NULL && config->port.tx_idle != NULL &&
+           config->port.clock_ms != NULL && config->timeout_ms != 0U &&
+           config->timeout_ms <= AS608_MAX_TIMEOUT_MS;
 }
 
-as608_status_t as608_transaction_send(as608_t *ctx,
+void as608_transaction_init(as608_transaction_t *txn, const as608_config_t *config)
+{
+    const as608_config_t saved = *config;
+    (void)memset(txn, 0, sizeof(*txn));
+    txn->config = saved;
+}
+
+void as608_transaction_begin(as608_transaction_t *txn)
+{
+    txn->started_ms = txn->config.port.clock_ms(txn->config.port.user);
+}
+
+as608_status_t as608_transaction_send(as608_transaction_t *txn,
                                     const as608_transaction_frame_t *frame)
 {
-    if (frame->length > 256U || (frame->length != 0U && frame->data == NULL)) {
+    if (frame->length > AS608_TRANSACTION_MAX_PAYLOAD_BYTES || (frame->length != 0U && frame->data == NULL)) {
         return AS608_STATUS_INVALID_ARG;
     }
     const as608_packet_header_t header = {
-        ctx->config.device_address, (uint8_t)frame->kind, (uint16_t)frame->length
+        txn->config.device_address, (uint8_t)frame->kind, (uint16_t)frame->length
     };
-    const as608_status_t status = as608_packet_encode_header(&header, ctx->transaction.tx_frame);
+    const as608_status_t status = as608_packet_encode_header(&header, txn->tx_frame);
     if (status != AS608_STATUS_OK) return status;
     if (frame->length != 0U) {
-        (void)memcpy(ctx->transaction.tx_frame + AS608_PACKET_HEADER_BYTES,
+        (void)memcpy(txn->tx_frame + AS608_PACKET_HEADER_BYTES,
                      frame->data, frame->length);
     }
     const uint16_t checksum = as608_packet_checksum_update(
         as608_packet_checksum_begin(&header), frame->data, frame->length);
     as608_packet_checksum_encode(checksum,
-        ctx->transaction.tx_frame + AS608_PACKET_HEADER_BYTES + frame->length);
-    ctx->transaction.tx_len = AS608_PACKET_OVERHEAD_BYTES + frame->length;
-    ctx->transaction.tx_pos = 0U;
-    ctx->transaction.wire_phase = WIRE_TX;
+        txn->tx_frame + AS608_PACKET_HEADER_BYTES + frame->length);
+    txn->tx_len = AS608_PACKET_OVERHEAD_BYTES + frame->length;
+    txn->tx_pos = 0U;
+    txn->wire_phase = WIRE_TX;
     return AS608_STATUS_OK;
 }
 
-void as608_transaction_receive(as608_t *ctx, size_t limit)
+void as608_transaction_receive(as608_transaction_t *txn, size_t limit)
 {
-    ctx->transaction.rx_limit = limit;
-    ctx->transaction.rx_header_pos = 0U;
-    ctx->transaction.rx_body_pos = 0U;
-    ctx->transaction.rx_body_len = 0U;
-    ctx->transaction.wire_phase = WIRE_RX_HEADER;
+    txn->rx_limit = limit;
+    txn->rx_header_pos = 0U;
+    txn->rx_body_pos = 0U;
+    txn->rx_body_len = 0U;
+    txn->wire_phase = WIRE_RX_HEADER;
 }
 
-void as608_transaction_drain(as608_t *ctx)
+void as608_transaction_drain(as608_transaction_t *txn)
 {
-    ctx->transaction.wire_phase = WIRE_TX_DRAIN;
+    txn->wire_phase = WIRE_TX_DRAIN;
 }
 
-static as608_status_t parse_header(as608_t *ctx)
+static as608_status_t parse_header(as608_transaction_t *txn)
 {
     as608_packet_header_t header;
     const as608_status_t status = as608_packet_decode_header(
-        ctx->transaction.rx_header, ctx->config.device_address,
-        sizeof(ctx->transaction.rx_body) - AS608_PACKET_CHECKSUM_BYTES, &header);
+        txn->rx_header, txn->config.device_address,
+        sizeof(txn->rx_body) - AS608_PACKET_CHECKSUM_BYTES, &header);
     if (status != AS608_STATUS_OK) return status;
     if (header.kind != (uint8_t)AS608_PACKET_ACK &&
         header.kind != (uint8_t)AS608_PACKET_DATA &&
         header.kind != (uint8_t)AS608_PACKET_END_DATA) {
         return AS608_STATUS_UNEXPECTED_REPLY;
     }
-    if ((size_t)header.payload_size > ctx->transaction.rx_limit) {
+    if ((size_t)header.payload_size > txn->rx_limit) {
         return AS608_STATUS_UNEXPECTED_REPLY;
     }
-    ctx->transaction.rx_kind = header.kind;
-    ctx->transaction.rx_payload_len = header.payload_size;
-    ctx->transaction.rx_body_len = (size_t)header.payload_size + AS608_PACKET_CHECKSUM_BYTES;
-    ctx->transaction.rx_body_pos = 0U;
-    ctx->transaction.wire_phase = WIRE_RX_BODY;
+    txn->rx_kind = header.kind;
+    txn->rx_payload_len = header.payload_size;
+    txn->rx_body_len = (size_t)header.payload_size + AS608_PACKET_CHECKSUM_BYTES;
+    txn->rx_body_pos = 0U;
+    txn->wire_phase = WIRE_RX_BODY;
     return AS608_STATUS_OK;
 }
 
-static bool checksum_valid(const as608_t *ctx)
+static bool checksum_valid(const as608_transaction_t *txn)
 {
     const as608_packet_header_t header = {
-        ctx->config.device_address, ctx->transaction.rx_kind,
-        (uint16_t)ctx->transaction.rx_payload_len
+        txn->config.device_address, txn->rx_kind,
+        (uint16_t)txn->rx_payload_len
     };
     const uint16_t checksum = as608_packet_checksum_update(
-        as608_packet_checksum_begin(&header), ctx->transaction.rx_body, ctx->transaction.rx_payload_len);
+        as608_packet_checksum_begin(&header), txn->rx_body, txn->rx_payload_len);
     return as608_packet_checksum_matches(
-        checksum, ctx->transaction.rx_body + ctx->transaction.rx_payload_len);
+        checksum, txn->rx_body + txn->rx_payload_len);
 }
 
-static as608_transaction_result_t transmit_step(as608_t *ctx)
+static as608_transaction_result_t transmit_step(as608_transaction_t *txn)
 {
-    const size_t count = ctx->transaction.tx_len - ctx->transaction.tx_pos;
-    if (count == 0U) return fault(ctx, AS608_STATUS_UNEXPECTED_REPLY);
-    const int32_t n = ctx->config.port.try_write(
-        ctx->config.port.user, ctx->transaction.tx_frame + ctx->transaction.tx_pos, count);
-    if (n < 0 || (size_t)n > count) return fault(ctx, AS608_STATUS_IO_ERROR);
-    ctx->transaction.tx_pos += (size_t)n;
-    return ctx->transaction.tx_pos == ctx->transaction.tx_len ?
-        event(ctx, AS608_TXN_SENT, AS608_STATUS_OK) : pending(ctx);
+    const size_t count = txn->tx_len - txn->tx_pos;
+    if (count == 0U) return fault(txn, AS608_STATUS_UNEXPECTED_REPLY);
+    const int32_t n = txn->config.port.try_write(
+        txn->config.port.user, txn->tx_frame + txn->tx_pos, count);
+    if (n < 0 || (size_t)n > count) return fault(txn, AS608_STATUS_IO_ERROR);
+    txn->tx_pos += (size_t)n;
+    return txn->tx_pos == txn->tx_len ?
+        event(txn, AS608_TXN_SENT, AS608_STATUS_OK) : pending(txn);
 }
 
-static as608_transaction_result_t header_step(as608_t *ctx)
+static as608_transaction_result_t header_step(as608_transaction_t *txn)
 {
-    const size_t count = sizeof(ctx->transaction.rx_header) - ctx->transaction.rx_header_pos;
-    if (count == 0U) return fault(ctx, AS608_STATUS_UNEXPECTED_REPLY);
-    const int32_t n = ctx->config.port.try_read(
-        ctx->config.port.user, ctx->transaction.rx_header + ctx->transaction.rx_header_pos, count);
-    if (n < 0 || (size_t)n > count) return fault(ctx, AS608_STATUS_IO_ERROR);
-    ctx->transaction.rx_header_pos += (size_t)n;
-    if (ctx->transaction.rx_header_pos != sizeof(ctx->transaction.rx_header)) return pending(ctx);
-    const as608_status_t status = parse_header(ctx);
-    return status == AS608_STATUS_OK ? pending(ctx) : fault(ctx, status);
+    const size_t count = sizeof(txn->rx_header) - txn->rx_header_pos;
+    if (count == 0U) return fault(txn, AS608_STATUS_UNEXPECTED_REPLY);
+    const int32_t n = txn->config.port.try_read(
+        txn->config.port.user, txn->rx_header + txn->rx_header_pos, count);
+    if (n < 0 || (size_t)n > count) return fault(txn, AS608_STATUS_IO_ERROR);
+    txn->rx_header_pos += (size_t)n;
+    if (txn->rx_header_pos != sizeof(txn->rx_header)) return pending(txn);
+    const as608_status_t status = parse_header(txn);
+    return status == AS608_STATUS_OK ? pending(txn) : fault(txn, status);
 }
 
-static as608_transaction_result_t payload_step(as608_t *ctx)
+static as608_transaction_result_t payload_step(as608_transaction_t *txn)
 {
-    const size_t count = ctx->transaction.rx_body_len - ctx->transaction.rx_body_pos;
-    if (count == 0U) return fault(ctx, AS608_STATUS_UNEXPECTED_REPLY);
-    const int32_t n = ctx->config.port.try_read(
-        ctx->config.port.user, ctx->transaction.rx_body + ctx->transaction.rx_body_pos, count);
-    if (n < 0 || (size_t)n > count) return fault(ctx, AS608_STATUS_IO_ERROR);
-    ctx->transaction.rx_body_pos += (size_t)n;
-    if (ctx->transaction.rx_body_pos != ctx->transaction.rx_body_len) return pending(ctx);
-    if (!checksum_valid(ctx)) return fault(ctx, AS608_STATUS_CHECKSUM_ERROR);
-    return event(ctx, AS608_TXN_RECEIVED, AS608_STATUS_OK);
+    const size_t count = txn->rx_body_len - txn->rx_body_pos;
+    if (count == 0U) return fault(txn, AS608_STATUS_UNEXPECTED_REPLY);
+    const int32_t n = txn->config.port.try_read(
+        txn->config.port.user, txn->rx_body + txn->rx_body_pos, count);
+    if (n < 0 || (size_t)n > count) return fault(txn, AS608_STATUS_IO_ERROR);
+    txn->rx_body_pos += (size_t)n;
+    if (txn->rx_body_pos != txn->rx_body_len) return pending(txn);
+    if (!checksum_valid(txn)) return fault(txn, AS608_STATUS_CHECKSUM_ERROR);
+    return event(txn, AS608_TXN_RECEIVED, AS608_STATUS_OK);
 }
 
-static as608_transaction_result_t drain_step(as608_t *ctx)
+static as608_transaction_result_t drain_step(as608_transaction_t *txn)
 {
-    const int32_t idle = ctx->config.port.tx_idle(ctx->config.port.user);
-    if (idle == 0) return pending(ctx);
-    if (idle != 1) return fault(ctx, AS608_STATUS_IO_ERROR);
-    return event(ctx, AS608_TXN_DRAINED, AS608_STATUS_OK);
+    const int32_t idle = txn->config.port.tx_idle(txn->config.port.user);
+    if (idle == 0) return pending(txn);
+    if (idle != 1) return fault(txn, AS608_STATUS_IO_ERROR);
+    return event(txn, AS608_TXN_DRAINED, AS608_STATUS_OK);
 }
 
-as608_transaction_result_t as608_transaction_process(as608_t *ctx)
+as608_transaction_result_t as608_transaction_process(as608_transaction_t *txn)
 {
-    const uint32_t elapsed = ctx->config.port.clock_ms(ctx->config.port.user) -
-                             ctx->transaction.started_ms;
-    if (elapsed >= ctx->config.timeout_ms) return fault(ctx, AS608_STATUS_TIMEOUT);
-    switch (ctx->transaction.wire_phase) {
-    case WIRE_TX:       return transmit_step(ctx);
-    case WIRE_RX_HEADER: return header_step(ctx);
-    case WIRE_RX_BODY:  return payload_step(ctx);
-    case WIRE_TX_DRAIN: return drain_step(ctx);
-    default: return fault(ctx, AS608_STATUS_UNEXPECTED_REPLY);
+    const uint32_t elapsed = txn->config.port.clock_ms(txn->config.port.user) -
+                             txn->started_ms;
+    if (elapsed >= txn->config.timeout_ms) return fault(txn, AS608_STATUS_TIMEOUT);
+    switch (txn->wire_phase) {
+    case WIRE_TX:       return transmit_step(txn);
+    case WIRE_RX_HEADER: return header_step(txn);
+    case WIRE_RX_BODY:  return payload_step(txn);
+    case WIRE_TX_DRAIN: return drain_step(txn);
+    default: return fault(txn, AS608_STATUS_UNEXPECTED_REPLY);
     }
 }
 
-as608_transaction_frame_t as608_transaction_received(const as608_t *ctx)
+as608_transaction_frame_t as608_transaction_received(const as608_transaction_t *txn)
 {
     return (as608_transaction_frame_t){
-        (as608_packet_kind_t)ctx->transaction.rx_kind, ctx->transaction.rx_body, ctx->transaction.rx_payload_len
+        (as608_packet_kind_t)txn->rx_kind, txn->rx_body, txn->rx_payload_len
     };
 }

@@ -7,6 +7,10 @@
 
 #include "as608_packet.h"
 
+#if defined(AS608_H) || defined(AS608_TRANSACTION_H) || defined(AS608_PORT_H)
+#error "Packet codec must not depend on command, transport or port layers"
+#endif
+
 static void test_packet_identifiers(void)
 {
     /* Protocol wire IDs, not sequential enum ordinals. */

@@ -20,7 +20,9 @@ jobs:
           mkdir -p build
           ${{ matrix.compiler }} -std=c11 -Wall -Wextra -Werror -pedantic -I. as608_packet.c as608_transaction.c test_as608_transaction.c -o build/test_transaction
           ./build/test_transaction
-          for suite in packet commands async async_faults; do
+          ${{ matrix.compiler }} -std=c11 -Wall -Wextra -Werror -pedantic -I. as608_packet.c test_as608_packet.c -o build/test_packet
+          ./build/test_packet
+          for suite in commands async async_faults; do
             ${{ matrix.compiler }} -std=c11 -Wall -Wextra -Werror -pedantic -I. as608_packet.c as608_transaction.c as608.c test_as608_${suite}.c -o build/test_${suite}
             ./build/test_${suite}
           done

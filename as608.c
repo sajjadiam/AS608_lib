@@ -100,7 +100,7 @@ static as608_progress_t finish(as608_t *ctx, uint8_t ack)
 static as608_status_t command_start(as608_t *ctx, const command_t *command)
 {
     const as608_transaction_frame_t frame = {AS608_PACKET_COMMAND, command->bytes, command->length};
-    const as608_status_t status = as608_transaction_send(ctx, &frame);
+    const as608_status_t status = as608_transaction_send(&ctx->transaction, &frame);
     if (status == AS608_STATUS_OK) ctx->step = command->step;
     return status;
 }
@@ -126,29 +126,22 @@ static as608_status_t launch(as608_t *ctx, const command_t *command)
     ctx->result = (as608_result_t){AS608_STATUS_NOT_INITIALIZED, 0U};
     ctx->reply_output = NULL;
     ctx->stream_length = NULL;
-    as608_transaction_begin(ctx);
+    as608_transaction_begin(&ctx->transaction);
     ctx->state = AS608_STATE_BUSY;
     return AS608_STATUS_OK;
 }
 
-static bool valid_config(const as608_config_t *config)
-{
-    return config != NULL && config->port.try_read != NULL &&
-           config->port.try_write != NULL && config->port.tx_idle != NULL &&
-           config->port.clock_ms != NULL && config->timeout_ms != 0U &&
-           config->timeout_ms <= AS608_MAX_TIMEOUT_MS;
-}
-
 as608_status_t as608_init(as608_t *ctx, const as608_config_t *config)
 {
-    if (ctx == NULL || !valid_config(config)) return AS608_STATUS_INVALID_ARG;
+    if (ctx == NULL || !as608_transaction_config_valid(config)) return AS608_STATUS_INVALID_ARG;
     if (ctx->state == AS608_STATE_DESYNCHRONIZED) {
         return AS608_STATUS_RECOVERY_REQUIRED;
     }
     if (ctx->state == AS608_STATE_BUSY) return AS608_STATUS_BUSY;
     if (ctx->state != AS608_STATE_UNINITIALIZED) return AS608_STATUS_INVALID_ARG;
+    const as608_config_t saved = *config;
     (void)memset(ctx, 0, sizeof(*ctx));
-    ctx->config = *config;
+    as608_transaction_init(&ctx->transaction, &saved);
     ctx->state = AS608_STATE_IDLE;
     return AS608_STATUS_OK;
 }
@@ -371,7 +364,7 @@ static as608_status_t send_next_chunk(as608_t *ctx)
         ctx->input_offset + length == ctx->input_length ?
         AS608_PACKET_END_DATA : AS608_PACKET_DATA;
     const as608_transaction_frame_t frame = {kind, ctx->input + ctx->input_offset, length};
-    const as608_status_t status = as608_transaction_send(ctx, &frame);
+    const as608_status_t status = as608_transaction_send(&ctx->transaction, &frame);
     if (status == AS608_STATUS_OK) ctx->input_offset += length;
     return status;
 }
@@ -379,11 +372,11 @@ static as608_status_t send_next_chunk(as608_t *ctx)
 static as608_status_t sent_frame(as608_t *ctx)
 {
     if (ctx->step != STEP_DOWN_DATA) {
-        as608_transaction_receive(ctx, 256U);
+        as608_transaction_receive(&ctx->transaction, AS608_TRANSACTION_MAX_PAYLOAD_BYTES);
         return AS608_STATUS_OK;
     }
     if (ctx->input_offset < ctx->input_length) return send_next_chunk(ctx);
-    as608_transaction_drain(ctx);
+    as608_transaction_drain(&ctx->transaction);
     return AS608_STATUS_OK;
 }
 
@@ -415,7 +408,7 @@ static as608_progress_t accept_stream(as608_t *ctx, const as608_transaction_fram
     (void)memcpy(ctx->stream_data + ctx->stream_offset, frame->data, length);
     ctx->stream_offset += length;
     if (frame->kind != AS608_PACKET_END_DATA) {
-        as608_transaction_receive(ctx, ctx->stream_capacity - ctx->stream_offset);
+        as608_transaction_receive(&ctx->transaction, ctx->stream_capacity - ctx->stream_offset);
         return AS608_PENDING;
     }
     if (!stream_size_valid(ctx)) return quarantine(ctx, AS608_STATUS_UNEXPECTED_REPLY);
@@ -489,7 +482,7 @@ static as608_progress_t success_ack(as608_t *ctx, const as608_transaction_frame_
     case STEP_UP_ACK:
     case STEP_INFO_ACK:
         ctx->step = ctx->step == STEP_UP_ACK ? STEP_UP_DATA : STEP_INFO_DATA;
-        as608_transaction_receive(ctx, ctx->stream_capacity - ctx->stream_offset);
+        as608_transaction_receive(&ctx->transaction, ctx->stream_capacity - ctx->stream_offset);
         return AS608_PENDING;
     case STEP_PARAMS_ACK:
         return next_or_fault(ctx, begin_download(ctx, frame));
@@ -522,12 +515,12 @@ as608_progress_t as608_process(as608_t *ctx)
     if (ctx == NULL) return AS608_FAILED;
     if (ctx->state == AS608_STATE_DONE) return AS608_COMPLETE;
     if (ctx->state != AS608_STATE_BUSY) return AS608_FAILED;
-    const as608_transaction_result_t result = as608_transaction_process(ctx);
+    const as608_transaction_result_t result = as608_transaction_process(&ctx->transaction);
     switch (result.event) {
     case AS608_TXN_PENDING: return AS608_PENDING;
     case AS608_TXN_SENT: return next_or_fault(ctx, sent_frame(ctx));
     case AS608_TXN_RECEIVED: {
-        const as608_transaction_frame_t frame = as608_transaction_received(ctx);
+        const as608_transaction_frame_t frame = as608_transaction_received(&ctx->transaction);
         return verified_packet(ctx, &frame);
     }
     case AS608_TXN_DRAINED: return download_drained(ctx);
@@ -564,9 +557,9 @@ as608_status_t as608_confirm_reset(as608_t *ctx)
     if (ctx->state == AS608_STATE_UNINITIALIZED) return AS608_STATUS_NOT_INITIALIZED;
     if (ctx->state == AS608_STATE_BUSY) return AS608_STATUS_BUSY;
     if (ctx->state != AS608_STATE_DESYNCHRONIZED) return AS608_STATUS_INVALID_ARG;
-    const as608_config_t config = ctx->config;
+    const as608_config_t config = ctx->transaction.config;
     (void)memset(ctx, 0, sizeof(*ctx));
-    ctx->config = config;
+    as608_transaction_init(&ctx->transaction, &config);
     ctx->state = AS608_STATE_IDLE;
     return AS608_STATUS_OK;
 }

@@ -1,6 +1,10 @@
 /** @file test_as608_transaction.c @brief Independent transport tests. */
 #include "as608_transaction.h"
 
+#ifdef AS608_H
+#error "Transaction must not depend on the public command header"
+#endif
+
 #include <assert.h>
 #include <stdio.h>
 #include <string.h>
@@ -49,18 +53,19 @@ static uint32_t clock_ms(void *user)
     return ((mock_t *)user)->now;
 }
 
-static void setup(as608_t *ctx, mock_t *mock)
+static void setup(as608_transaction_t *ctx, mock_t *mock)
 {
-    *ctx = (as608_t){0};
-    ctx->config = (as608_config_t){
+    const as608_config_t config = {
         .port = { .user = mock, .try_write = write_byte,
                   .try_read = read_byte, .tx_idle = idle, .clock_ms = clock_ms },
         .device_address = AS608_DEFAULT_ADDRESS, .timeout_ms = 100U
     };
+    assert(as608_transaction_config_valid(&config));
+    as608_transaction_init(ctx, &config);
     as608_transaction_begin(ctx);
 }
 
-static as608_transaction_result_t step(as608_t *ctx, mock_t *mock)
+static as608_transaction_result_t step(as608_transaction_t *ctx, mock_t *mock)
 {
     const size_t calls = mock->calls;
     const as608_transaction_result_t result = as608_transaction_process(ctx);
@@ -68,7 +73,7 @@ static as608_transaction_result_t step(as608_t *ctx, mock_t *mock)
     return result;
 }
 
-static as608_transaction_result_t run(as608_t *ctx, mock_t *mock)
+static as608_transaction_result_t run(as608_transaction_t *ctx, mock_t *mock)
 {
     for (size_t i = 0U; i < 300U; ++i) {
         const as608_transaction_result_t result = step(ctx, mock);
@@ -94,7 +99,7 @@ static void prepare_rx(mock_t *mock)
 static void test_packet_events(void)
 {
     mock_t mock = {0};
-    as608_t ctx;
+    as608_transaction_t ctx;
     setup(&ctx, &mock);
     uint8_t data = 0x42U;
     const as608_transaction_frame_t frame = {AS608_PACKET_DATA, &data, 1U};
@@ -124,7 +129,7 @@ static void test_packet_events(void)
 static void test_faults(void)
 {
     mock_t mock = {0};
-    as608_t ctx;
+    as608_transaction_t ctx;
     setup(&ctx, &mock);
     prepare_rx(&mock);
     mock.rx[11] ^= 1U;
@@ -149,7 +154,7 @@ static void test_faults(void)
 static void test_shared_deadline(void)
 {
     mock_t mock = {.now = UINT32_MAX - 20U};
-    as608_t ctx;
+    as608_transaction_t ctx;
     setup(&ctx, &mock);
     const uint8_t data = 1U;
     const as608_transaction_frame_t frame = {AS608_PACKET_COMMAND, &data, 1U};
@@ -164,8 +169,26 @@ static void test_shared_deadline(void)
     assert(mock.calls == calls);
 }
 
+static void test_config_validation(void)
+{
+    mock_t mock = {0};
+    as608_transaction_t txn;
+    setup(&txn, &mock);
+    as608_config_t config = txn.config;
+    config.timeout_ms = 0U;
+    assert(!as608_transaction_config_valid(&config));
+    config.timeout_ms = AS608_MAX_TIMEOUT_MS + 1U;
+    assert(!as608_transaction_config_valid(&config));
+    config.timeout_ms = 1U;
+    config.port.try_read = NULL;
+    assert(!as608_transaction_config_valid(&config));
+    assert(!as608_transaction_config_valid(NULL));
+    assert(mock.calls == 0U);
+}
+
 int main(void)
 {
+    test_config_validation();
     test_packet_events();
     test_faults();
     test_shared_deadline();

@@ -5,19 +5,7 @@
 #ifndef AS608_PORT_H
 #define AS608_PORT_H
 
-#include <limits.h>
-#include <stddef.h>
-#include <stdint.h>
-
-#if !defined(__cplusplus) && (!defined(__STDC_VERSION__) || __STDC_VERSION__ < 201112L)
-#error "AS608 requires ISO C11 or later"
-#endif
-
-#if defined(__cplusplus)
-static_assert(CHAR_BIT == 8, "AS608 requires 8-bit bytes");
-#else
-_Static_assert(CHAR_BIT == 8, "AS608 requires 8-bit bytes");
-#endif
+#include "as608_types.h"
 
 #ifdef __cplusplus
 extern "C" {
