@@ -27,3 +27,5 @@ jobs:
           # references; re-enable them as their APIs become linkable.
           ${{ matrix.compiler }} -std=c11 -Wall -Wextra -Werror -pedantic -I. as608_packet.c as608_transaction.c as608.c test_as608_init.c -o build/test_init
           ./build/test_init
+          ${{ matrix.compiler }} -std=c11 -Wall -Wextra -Werror -pedantic -I. as608_packet.c as608_transaction.c as608.c test_as608_process.c -o build/test_process
+          ./build/test_process

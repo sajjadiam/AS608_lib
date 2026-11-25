@@ -42,6 +42,103 @@ as608_status_t as608_init(as608_t *ctx, const as608_config_t *config)
  * ========================================================================= */
 
 /* =========================================================================
+ * API 02: as608_process
+ * =========================================================================
+ * Shared command-state helpers live here, above their first active user.
+ * Only the simple ACK path is active in this rebuild stage. Additional
+ * command phases will be restored with the corresponding start APIs.
+ */
+
+enum {
+    STEP_SIMPLE_ACK = 1,
+    STEP_LOAD_ACK,
+    STEP_UP_ACK,
+    STEP_UP_DATA,
+    STEP_INFO_ACK,
+    STEP_INFO_DATA,
+    STEP_PARAMS_ACK,
+    STEP_DOWN_ACK,
+    STEP_DOWN_DATA,
+    STEP_READ_PARAMS_ACK,
+    STEP_U16_ACK,
+    STEP_SEARCH_ACK,
+    STEP_INDEX_ACK
+};
+
+static as608_progress_t quarantine(as608_t *ctx,
+                                    as608_status_t status)
+{
+    ctx->result.status = status;
+    ctx->result.confirmation = 0U;
+    ctx->state = AS608_STATE_DESYNCHRONIZED;
+    return AS608_FAILED;
+}
+
+static as608_progress_t finish(as608_t *ctx, uint8_t ack)
+{
+    ctx->result.status = AS608_STATUS_OK;
+    ctx->result.confirmation = ack;
+    ctx->state = AS608_STATE_DONE;
+    return AS608_COMPLETE;
+}
+
+static as608_progress_t accept_simple_ack(as608_t *ctx)
+{
+    const as608_transaction_frame_t frame =
+        as608_transaction_received(&ctx->transaction);
+
+    if (frame.kind != AS608_PACKET_ACK || frame.length != 1U) {
+        return quarantine(ctx, AS608_STATUS_UNEXPECTED_REPLY);
+    }
+
+    return finish(ctx, frame.data[0]);
+}
+
+as608_progress_t as608_process(as608_t *ctx)
+{
+    if (ctx == NULL) {
+        return AS608_FAILED;
+    }
+
+    if (ctx->state == AS608_STATE_DONE) {
+        return AS608_COMPLETE;
+    }
+
+    if (ctx->state != AS608_STATE_BUSY) {
+        return AS608_FAILED;
+    }
+
+    if (ctx->step != STEP_SIMPLE_ACK) {
+        return quarantine(ctx, AS608_STATUS_UNEXPECTED_REPLY);
+    }
+
+    const as608_transaction_result_t result =
+        as608_transaction_process(&ctx->transaction);
+
+    switch (result.event) {
+    case AS608_TXN_PENDING:
+        return AS608_PENDING;
+
+    case AS608_TXN_SENT:
+        as608_transaction_receive(&ctx->transaction, 1U);
+        return AS608_PENDING;
+
+    case AS608_TXN_RECEIVED:
+        return accept_simple_ack(ctx);
+
+    case AS608_TXN_FAULT:
+        return quarantine(ctx, result.status);
+
+    default:
+        return quarantine(ctx, AS608_STATUS_UNEXPECTED_REPLY);
+    }
+}
+
+/* =========================================================================
+ * END API 02
+ * ========================================================================= */
+
+/* =========================================================================
  * INACTIVE REFERENCE — incremental API rebuild
  *
  * Previous implementation from commit 53425e4.
@@ -50,22 +147,6 @@ as608_status_t as608_init(as608_t *ctx, const as608_config_t *config)
  * are defined once, above their first active user. Never compile this block.
  * ========================================================================= */
 
-// enum {
-//     STEP_SIMPLE_ACK = 1,
-//     STEP_LOAD_ACK,
-//     STEP_UP_ACK,
-//     STEP_UP_DATA,
-//     STEP_INFO_ACK,
-//     STEP_INFO_DATA,
-//     STEP_PARAMS_ACK,
-//     STEP_DOWN_ACK,
-//     STEP_DOWN_DATA,
-//     STEP_READ_PARAMS_ACK,
-//     STEP_U16_ACK,
-//     STEP_SEARCH_ACK,
-//     STEP_INDEX_ACK
-// };
-// 
 // enum {
 //     CMD_GET_IMAGE = 0x01, CMD_GEN_CHAR = 0x02, CMD_MATCH = 0x03,
 //     CMD_SEARCH = 0x04, CMD_REG_MODEL = 0x05, CMD_STORE_CHAR = 0x06,
@@ -124,23 +205,6 @@ as608_status_t as608_init(as608_t *ctx, const as608_config_t *config)
 // {
 //     return (buffer == AS608_CHAR_BUFFER_1) ||
 //            (buffer == AS608_CHAR_BUFFER_2);
-// }
-// 
-// static as608_progress_t quarantine(as608_t *ctx,
-//                                          as608_status_t status)
-// {
-//     ctx->result.status = status;
-//     ctx->result.confirmation = 0U;
-//     ctx->state = AS608_STATE_DESYNCHRONIZED;
-//     return AS608_FAILED;
-// }
-// 
-// static as608_progress_t finish(as608_t *ctx, uint8_t ack)
-// {
-//     ctx->result.status = AS608_STATUS_OK;
-//     ctx->result.confirmation = ack;
-//     ctx->state = AS608_STATE_DONE;
-//     return AS608_COMPLETE;
 // }
 // 
 // static as608_status_t command_start(as608_t *ctx, const command_t *command)
@@ -540,25 +604,6 @@ as608_status_t as608_init(as608_t *ctx, const as608_config_t *config)
 //     const command_t command = page_command(CMD_STORE_CHAR,
 //         ctx->download_buffer, ctx->page_id);
 //     return next_or_fault(ctx, command_start(ctx, &command));
-// }
-// 
-// as608_progress_t as608_process(as608_t *ctx)
-// {
-//     if (ctx == NULL) return AS608_FAILED;
-//     if (ctx->state == AS608_STATE_DONE) return AS608_COMPLETE;
-//     if (ctx->state != AS608_STATE_BUSY) return AS608_FAILED;
-//     const as608_transaction_result_t result = as608_transaction_process(&ctx->transaction);
-//     switch (result.event) {
-//     case AS608_TXN_PENDING: return AS608_PENDING;
-//     case AS608_TXN_SENT: return next_or_fault(ctx, sent_frame(ctx));
-//     case AS608_TXN_RECEIVED: {
-//         const as608_transaction_frame_t frame = as608_transaction_received(&ctx->transaction);
-//         return verified_packet(ctx, &frame);
-//     }
-//     case AS608_TXN_DRAINED: return download_drained(ctx);
-//     case AS608_TXN_FAULT: return quarantine(ctx, result.status);
-//     default: return quarantine(ctx, AS608_STATUS_UNEXPECTED_REPLY);
-//     }
 // }
 // 
 // bool as608_get_result(const as608_t *ctx, as608_result_t *result)

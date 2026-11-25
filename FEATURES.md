@@ -13,7 +13,8 @@ This checklist tracks the host library against the Synochip AS60x Communication 
 ## Active rebuild status (current source)
 
 - [x] API 01: `as608_init()` — active implementation and dedicated tests.
-- [ ] API 02: `as608_process()`.
+- [x] API 02: `as608_process()` — active bounded simple-ACK path and dedicated tests; additional command phases restored with their start APIs.
+- [ ] API 03: `as608_get_result()`.
 - [ ] Remaining lifecycle and command APIs, restored individually in header order.
 
 Active wire-command coverage: **0/31** until the command APIs are restored.

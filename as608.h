@@ -212,16 +212,40 @@ typedef struct {
  */
 as608_status_t as608_init(as608_t *ctx, const as608_config_t *config);
 
-/* Incremental rebuild: only as608_init() is currently defined in as608.c.
- * The following existing API declarations are retained as contracts and
- * are not linkable until their individual implementations are restored.
- * See FEATURES.md for current and historical implementation status.
- */
-
-/** @brief Advance one bounded transport operation; never wait for UART.
- * @note Call only for a started job, in a serialized scheduler.
+/**
+ * @brief Advance one step of an admitted non-blocking job.
+ *
+ * @details If BUSY, advance the existing transaction engine at most once
+ * and handle its event. No UART wait loop, sleep, automatic retry or
+ * allocation occurs. The transaction engine uses the original job
+ * deadline, not a new deadline per call or packet.
+ *
+ * @param[in,out] ctx Initialized, caller-owned device context. A NULL
+ * pointer is rejected without dereferencing it.
+ *
+ * @retval AS608_PENDING The job remains BUSY; call again from the scheduler.
+ * @retval AS608_COMPLETE A validated terminal result exists (including a
+ * negative sensor ACK). Repeated calls in DONE return COMPLETE without I/O.
+ * @retval AS608_FAILED Invalid/idle/uninitialized/quarantined context,
+ * or a host-side communication/protocol failure.
+ *
+ * @pre Calls sharing the context must be serialized. For useful progress,
+ * a start API must have admitted a job, and its buffers must remain valid.
+ * @post A valid terminal ACK sets DONE and stores its raw confirmation
+ * code. A transport/protocol fault during BUSY sets DESYNCHRONIZED and
+ * records the host error; a non-BUSY context is left unchanged.
+ * @note During incremental rebuild stage 02, only the simple one-byte ACK
+ * phase is implemented. No public command start API is active yet.
+ * Future command-specific phases will extend this same engine.
+ * @see as608_get_result
+ * @see as608_confirm_reset
  */
 as608_progress_t as608_process(as608_t *ctx);
+
+/* Incremental rebuild: as608_init() and as608_process() are defined.
+ * The following API declarations are retained as contracts and are not
+ * linkable until their implementations are restored. See FEATURES.md.
+ */
 
 /** @brief Copy the terminal result; false before a job terminates.
  * COMPLETE does not imply ACK_OK. Check both status and confirmation.

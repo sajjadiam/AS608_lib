@@ -6,11 +6,12 @@ physical sensor. Historical hardware validation: two AS608_QCCF modules on
 STM32F103C8T6, USART1/USART2, 57,600 baud, 8N2; successful 768-byte template
 transfer. The unified non-blocking port still needs hardware validation.
 
-## Incremental API rebuild — active stage 01
+## Incremental API rebuild — active stage 02
 
-Only `as608_init()` is currently compiled from as608.c. The previous
-implementation is preserved as line comments below the active section;
-its already migrated init definition has been removed. Each subsequent
+Only `as608_init()` and `as608_process()` are currently compiled from
+as608.c. Process supports the simple Command → ACK phase; no public start
+API is active yet. The previous implementation is preserved as line
+comments below the active sections, excluding migrated definitions. Each subsequent
 API will be restored in header order, with its required static helpers
 above it and explicit section boundaries. Shared helpers remain unique.
 The packet and transaction layers are unchanged.
@@ -19,7 +20,7 @@ This is intentionally an incomplete, non-deployable command layer:
 the other declarations in as608.h cannot currently be linked. The
 command/async regression sources are retained but not built until their
 required APIs are restored. CI still builds the independent packet and
-transaction tests and the new API 01 test. Previous command examples and
+transaction tests and the API 01/02 tests. Previous command examples and
 coverage below describe the historical baseline, not this active stage.
 
 ## Flat project structure
@@ -33,6 +34,7 @@ AS608_lib/
 ├── as608_types.h                 Shared status and transport constants
 ├── as608_packet.h/.c              Internal packet codec and checksum
 ├── test_as608_init.c             Active API 01 initialization tests
+├── test_as608_process.c          Active API 02 progression tests
 ├── test_as608_transaction.c      Independent transport tests
 ├── test_as608_packet.c           Packet tests
 ├── test_as608_commands.c         Full command and template regression tests
@@ -178,6 +180,8 @@ cc -std=c11 -Wall -Wextra -Werror -pedantic -I. as608_packet.c as608_transaction
 ./build/test_transaction
 cc -std=c11 -Wall -Wextra -Werror -pedantic -I. as608_packet.c as608_transaction.c as608.c test_as608_init.c -o build/test_init
 ./build/test_init
+cc -std=c11 -Wall -Wextra -Werror -pedantic -I. as608_packet.c as608_transaction.c as608.c test_as608_process.c -o build/test_process
+./build/test_process
 # Full command/async regression tests are temporarily inactive.
 ```
 
