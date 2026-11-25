@@ -178,8 +178,45 @@ typedef struct {
     void *reply_output;
 } as608_t;
 
-/** @brief Initialize a zeroed context without accessing UART. */
+/**
+ * @brief Initialize a fresh caller-owned AS608 device context.
+ *
+ * @details Validates the transport configuration, clears the command and
+ * transaction state, copies the configuration and enters AS608_STATE_IDLE.
+ * Does not send a command, verify a password, reset the sensor, read the clock
+ * or invoke any port callback. No dynamic allocation is performed.
+ *
+ * @param[in,out] ctx Device context; must point to valid writable storage.
+ * @param[in] config Configuration with all four non-NULL port callbacks
+ * (try_write, try_read, tx_idle, clock_ms), device address and a timeout
+ * in milliseconds within [1, AS608_MAX_TIMEOUT_MS]. The configuration is
+ * copied; its storage need not remain alive after return. The objects
+ * referenced by port.user and callbacks must remain valid while in use.
+ *
+ * @retval AS608_STATUS_OK Context initialized and ready for a future job.
+ * @retval AS608_STATUS_INVALID_ARG Null argument, invalid configuration,
+ * or a context state other than UNINITIALIZED, BUSY or DESYNCHRONIZED.
+ * @retval AS608_STATUS_BUSY Valid configuration, but a job owns the context.
+ * @retval AS608_STATUS_RECOVERY_REQUIRED Valid configuration, but the link
+ * is quarantined; initialization must not bypass recovery.
+ *
+ * @pre For a new device, zero-initialize the entire context (e.g.,
+ * @code
+ * static as608_t sensor = {0};
+ * @endcode
+ * ) and ensure a fresh physical link epoch. Calls must be serialized.
+ * @post On success, ctx->state is AS608_STATE_IDLE and no job is active.
+ * @post On failure, the context is unchanged.
+ * @note This is local initialization only; success does not establish
+ * communication with the physical sensor.
+ */
 as608_status_t as608_init(as608_t *ctx, const as608_config_t *config);
+
+/* Incremental rebuild: only as608_init() is currently defined in as608.c.
+ * The following existing API declarations are retained as contracts and
+ * are not linkable until their individual implementations are restored.
+ * See FEATURES.md for current and historical implementation status.
+ */
 
 /** @brief Advance one bounded transport operation; never wait for UART.
  * @note Call only for a started job, in a serialized scheduler.

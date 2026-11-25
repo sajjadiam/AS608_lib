@@ -10,6 +10,17 @@ This checklist tracks the host library against the Synochip AS60x Communication 
 - Implementation is not equivalent to hardware validation or universal firmware compatibility.
 - API design: all 31 documented opcodes have contracts in [as608.h](as608.h). The 15 missing commands are declarations only under `AS608_DECLARE_PLANNED_API`; they remain unchecked until implemented and tested.
 
+## Active rebuild status (current source)
+
+- [x] API 01: `as608_init()` — active implementation and dedicated tests.
+- [ ] API 02: `as608_process()`.
+- [ ] Remaining lifecycle and command APIs, restored individually in header order.
+
+Active wire-command coverage: **0/31** until the command APIs are restored.
+The 16/31 command coverage and checked items below describe the preserved
+pre-rebuild baseline (commit 53425e4), not currently linkable functions.
+No historical test result is asserted for the new active stage.
+
 ## 1. Fingerprint acquisition and recognition
 
 - [x] `0x01 PS_GetImage` — Capture fingerprint image into ImageBuffer; `as608_capture_image_start()`.
