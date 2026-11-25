@@ -291,18 +291,42 @@ bool as608_get_result(const as608_t *ctx, as608_result_t *result);
  */
 as608_status_t as608_abort(as608_t *ctx);
 
-/* Incremental rebuild: APIs 01–04 are defined.
+/**
+ * @brief Release a quarantined context after external physical recovery.
+ *
+ * @details Preserves the configured port, device address and timeout.
+ * Clears all command/transaction state, pending data references and the
+ * previous result, then returns the context to IDLE. Does not perform
+ * a physical reset, cancel TX, flush a UART queue, read the clock, wait
+ * for boot, verify communication or authenticate the sensor.
+ *
+ * @param[in,out] ctx Caller-owned device context.
+ * @retval AS608_STATUS_OK Recovery acknowledged; context returned to IDLE.
+ * @retval AS608_STATUS_NOT_INITIALIZED Context is UNINITIALIZED.
+ * @retval AS608_STATUS_BUSY A job is still active.
+ * @retval AS608_STATUS_INVALID_ARG Null pointer or any other state
+ * except DESYNCHRONIZED.
+ *
+ * @pre Calls sharing the context must be serialized. Before calling on a
+ * DESYNCHRONIZED context, the application must stop/cancel old TX,
+ * physically reset or power-cycle the sensor, wait for boot, and purge
+ * all stale RX/TX bytes and UART errors. The port and sensor must have a
+ * fresh communication epoch and compatible retained configuration.
+ * @post On success, no previous result is available and a new job may
+ * be admitted. The application must authenticate again if required.
+ * @post On failure, the context is unchanged.
+ * @warning The function trusts the caller's physical recovery guarantee.
+ * It cannot establish that guarantee itself or undo earlier sensor-side
+ * effects (including uncertain flash writes).
+ * @see as608_abort
+ * @see as608_get_result
+ */
+as608_status_t as608_confirm_reset(as608_t *ctx);
+
+/* Incremental rebuild: APIs 01–05 are defined.
  * The following API declarations remain contracts until restored.
  * See FEATURES.md.
  */
-
-/** @brief Acknowledge externally completed physical recovery.
- * @pre The application has stopped old TX, physically reset/power-cycled
- * the sensor, waited for boot, and purged all old RX/TX bytes and errors.
- * This function performs no reset, I/O, delays or verification itself.
- * Calling without satisfying that precondition is unsafe.
- */
-as608_status_t as608_confirm_reset(as608_t *ctx);
 
 /**
  * @brief Start functions: return admission status, never wait for a reply.

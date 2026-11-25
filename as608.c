@@ -186,6 +186,42 @@ as608_status_t as608_abort(as608_t *ctx) {
  * ========================================================================= */
 
 /* =========================================================================
+ * API 05: as608_confirm_reset
+ * ========================================================================= */
+
+as608_status_t as608_confirm_reset(as608_t *ctx) {
+    if (!ctx) {
+        return AS608_STATUS_INVALID_ARG;
+    }
+
+    switch (ctx->state) {
+        case AS608_STATE_UNINITIALIZED: {
+            return AS608_STATUS_NOT_INITIALIZED;
+        }
+        case AS608_STATE_BUSY: {
+            return AS608_STATUS_BUSY;
+        }
+        case AS608_STATE_DESYNCHRONIZED: {
+            break;
+        }
+        default: {
+            return AS608_STATUS_INVALID_ARG;
+        }
+    }
+
+    const as608_config_t config = ctx->transaction.config;
+    (void)memset(ctx, 0, sizeof(*ctx));
+    as608_transaction_init(&ctx->transaction, &config);
+    ctx->state = AS608_STATE_IDLE;
+
+    return AS608_STATUS_OK;
+}
+
+/* =========================================================================
+ * END API 05
+ * ========================================================================= */
+
+/* =========================================================================
  * INACTIVE REFERENCE — incremental API rebuild
  *
  * Previous implementation from commit 53425e4.
@@ -651,17 +687,4 @@ as608_status_t as608_abort(as608_t *ctx) {
 //     const command_t command = page_command(CMD_STORE_CHAR,
 //         ctx->download_buffer, ctx->page_id);
 //     return next_or_fault(ctx, command_start(ctx, &command));
-// }
-// 
-// as608_status_t as608_confirm_reset(as608_t *ctx)
-// {
-//     if (ctx == NULL) return AS608_STATUS_INVALID_ARG;
-//     if (ctx->state == AS608_STATE_UNINITIALIZED) return AS608_STATUS_NOT_INITIALIZED;
-//     if (ctx->state == AS608_STATE_BUSY) return AS608_STATUS_BUSY;
-//     if (ctx->state != AS608_STATE_DESYNCHRONIZED) return AS608_STATUS_INVALID_ARG;
-//     const as608_config_t config = ctx->transaction.config;
-//     (void)memset(ctx, 0, sizeof(*ctx));
-//     as608_transaction_init(&ctx->transaction, &config);
-//     ctx->state = AS608_STATE_IDLE;
-//     return AS608_STATUS_OK;
 // }

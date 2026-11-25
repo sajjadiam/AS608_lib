@@ -33,3 +33,5 @@ jobs:
           ./build/test_get_result
           ${{ matrix.compiler }} -std=c11 -Wall -Wextra -Werror -pedantic -I. as608_packet.c as608_transaction.c as608.c test_as608_abort.c -o build/test_abort
           ./build/test_abort
+          ${{ matrix.compiler }} -std=c11 -Wall -Wextra -Werror -pedantic -I. as608_packet.c as608_transaction.c as608.c test_as608_confirm_reset.c -o build/test_confirm_reset
+          ./build/test_confirm_reset
