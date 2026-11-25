@@ -21,6 +21,7 @@ AS608_lib/
 ├── test_as608_commands.c         Full command and template regression tests
 ├── test_as608_async.c            Cooperative scheduling tests
 ├── test_as608_async_faults.c      Partial I/O and fault tests
+├── FEATURES.md                   Command inventory and implementation roadmap
 ├── README.md
 ├── docs/adr/0001-as608-driver-architecture.md
 └── .github/workflows/c11-host-tests.yml
@@ -163,6 +164,23 @@ for suite in commands async async_faults; do
   ./build/test_${suite}
 done
 ```
+
+## Full command API design
+
+See [FEATURES.md](FEATURES.md) for the 31 documented AS60x commands and
+their implementation status. The normal header exposes the implemented
+non-blocking API. The additional, proposed contracts for the 15 missing
+opcodes and selected composite operations are grouped under
+`AS608_DECLARE_PLANNED_API` in `as608.h`. Defining the macro before inclusion
+only reveals declarations for review; it does not provide implementations,
+and linking a call to a planned function will fail until that function
+is implemented. The existing public functions and context layout are unchanged.
+
+Image and firmware data use caller-owned stream descriptors in the planned
+API instead of full-image allocations. Unknown firmware extensions (e.g.
+sleep or LED commands), platform adapters and multi-device backup/migration
+orchestration are tracked separately; no unverified wire commands or
+hardware-specific APIs are promised by the core.
 
 ## Migration
 

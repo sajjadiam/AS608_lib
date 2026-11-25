@@ -239,6 +239,274 @@ as608_status_t as608_delete_templates_start(as608_t *ctx, uint16_t start_page,
                                           uint16_t page_count);
 as608_status_t as608_empty_database_start(as608_t *ctx);
 
+/* -------------------------------------------------------------------------
+ * Planned API contracts (declarations only; NOT implemented or linkable).
+ *
+ * Define AS608_DECLARE_PLANNED_API before including this header to review
+ * the complete proposed API. This macro only exposes declarations; it
+ * does not enable code or report device support. See FEATURES.md.
+ *
+ * All planned start calls use the same admission/process/result lifecycle,
+ * operation-wide deadline and serialized per-device context. Caller-owned
+ * descriptors and referenced memory must stay valid through termination.
+ * ------------------------------------------------------------------------- */
+#if defined(AS608_DECLARE_PLANNED_API)
+
+/** Documented AS60x V1.0 sizes; actual firmware support must be verified. */
+#define AS608_FEATURE_256_BYTES ((size_t)256U)
+#define AS608_NOTEPAD_PAGE_BYTES ((size_t)32U)
+#define AS608_NOTEPAD_PAGE_COUNT 16U
+#define AS608_DEVICE_DESCRIPTOR_BYTES ((size_t)8U)
+
+/** Raw system status-register masks (ReadSysPara, manual p. 3). */
+typedef enum {
+    AS608_SENSOR_BUSY = 0x01,
+    AS608_SENSOR_MATCH_PASSED = 0x02,
+    AS608_SENSOR_PASSWORD_VERIFIED = 0x04,
+    AS608_SENSOR_IMAGE_VALID = 0x08
+} as608_sensor_status_flag_t;
+
+/** Security levels for PS_WriteReg, register 5. */
+typedef enum {
+    AS608_SECURITY_LEVEL_1 = 1,
+    AS608_SECURITY_LEVEL_2 = 2,
+    AS608_SECURITY_LEVEL_3 = 3,
+    AS608_SECURITY_LEVEL_4 = 4,
+    AS608_SECURITY_LEVEL_5 = 5
+} as608_security_level_t;
+
+/** Wire packet-size codes for PS_WriteReg, register 6. */
+typedef enum {
+    AS608_PACKET_SIZE_32 = 0,
+    AS608_PACKET_SIZE_64 = 1,
+    AS608_PACKET_SIZE_128 = 2,
+    AS608_PACKET_SIZE_256 = 3
+} as608_packet_size_t;
+
+/** PS_GenBinImage (0x1C) output mode. */
+typedef enum {
+    AS608_IMAGE_BINARY = 0,
+    AS608_IMAGE_THINNED = 1,
+    AS608_IMAGE_THINNED_WITH_MINUTIAE = 2
+} as608_image_mode_t;
+
+/** PS_BurnCode (0x1A) upgrade mode; variant-specific, destructive. */
+typedef enum {
+    AS608_BURN_INFORMATION_PAGE = 0,
+    AS608_BURN_FULL_FIRMWARE = 1
+} as608_burn_mode_t;
+
+/** Documented GPIO selector, not an MCU pin number. */
+typedef enum {
+    AS608_USER_GPIO_0 = 0,
+    AS608_USER_GPIO_1 = 1
+} as608_user_gpio_t;
+
+/** Ordinary 256-byte feature file, distinct from a 512/768-byte template.
+ * Do not assume this size/layout on unverified firmware.
+ */
+typedef struct {
+    uint8_t data[AS608_FEATURE_256_BYTES];
+} as608_feature_file_t;
+
+/** Notepad page request/result. Each write replaces the full page. */
+typedef struct {
+    uint8_t page; /**< 0..15 according to the manual; verify on target. */
+    uint8_t data[AS608_NOTEPAD_PAGE_BYTES];
+} as608_notepad_page_t;
+
+/** GPIO request and echoed state from a successful reply. */
+typedef struct {
+    as608_user_gpio_t pin;
+    bool level;        /**< Requested output level. */
+    bool actual_level; /**< Echoed output state, success only. */
+} as608_gpio_request_t;
+
+/** Fixed-width descriptor bytes, NOT guaranteed NUL-terminated.
+ * Parsed from the information page only after layout verification.
+ * product_model is not a guaranteed unique device serial number.
+ */
+typedef struct {
+    uint8_t product_model[AS608_DEVICE_DESCRIPTOR_BYTES];
+    uint8_t software_version[AS608_DEVICE_DESCRIPTOR_BYTES];
+    uint8_t manufacturer[AS608_DEVICE_DESCRIPTOR_BYTES];
+    uint8_t sensor_name[AS608_DEVICE_DESCRIPTOR_BYTES];
+} as608_device_info_t;
+
+/** Non-blocking stream source: provide exactly length bytes, 0 if not ready,
+ * or a negative value on failure. No partial positive return is permitted.
+ * Do not advance source state on a zero return. Each request is bounded by
+ * the transport payload limit; no callback may wait or re-enter the driver.
+ */
+typedef int32_t (*as608_stream_read_fn)(void *user, uint8_t *data,
+                                       size_t length);
+
+/** Non-blocking stream sink: consume/copy the entire validated fragment
+ * immediately and return true, or return false to fail the job. No RX
+ * backpressure is assumed: an unready sink is a failure, not a retry.
+ * The supplied pointer is borrowed for this call only.
+ */
+typedef bool (*as608_stream_write_fn)(void *user, const uint8_t *data,
+                                     size_t length);
+
+typedef struct {
+    void *user;
+    as608_stream_read_fn read;
+    size_t length; /**< Exact nonzero number of wire bytes to send. */
+} as608_stream_source_t;
+
+typedef struct {
+    void *user;
+    as608_stream_write_fn write;
+    size_t length; /**< Exact expected nonzero wire byte count. */
+} as608_stream_sink_t;
+
+/** Firmware request. Caller must verify device, image and recovery path.
+ * The stream describes the vendor-format image, not arbitrary flash data.
+ */
+typedef struct {
+    as608_burn_mode_t mode;
+    as608_stream_source_t source;
+} as608_firmware_request_t;
+
+/** Host-managed two-capture enrollment request.
+ * Poll only while waiting for finger placement/removal; no implicit retry
+ * of uncertain write operations. Whole workflow uses the job deadline.
+ */
+typedef struct {
+    uint16_t page_id;
+    uint32_t poll_interval_ms; /**< Nonzero scheduler poll interval. */
+} as608_enroll_request_t;
+
+/** Free-slot lookup result, committed on successful completion.
+ * found == false is a valid outcome (no free slot); page_id then invalid.
+ */
+typedef struct {
+    bool found;
+    uint16_t page_id;
+} as608_free_slot_t;
+
+/* ---- Fingerprint recognition ---- */
+
+/** PS_Enroll (0x10): firmware-managed enrollment; may write flash. */
+as608_status_t as608_enroll_start(as608_t *ctx, uint16_t *page_id);
+
+/** PS_Identify (0x11): firmware-managed acquisition/search.
+ * @warning Manual describes possible updates of incomplete templates.
+ */
+as608_status_t as608_identify_start(as608_t *ctx, as608_match_t *match);
+
+/** PS_HighSpeedSearch (0x1B): same request/output contract as Search. */
+as608_status_t as608_high_speed_search_start(as608_t *ctx,
+                                             as608_search_t *search);
+
+/* ---- Feature and image transfer ---- */
+
+/** PS_UpChar (0x08), ordinary 256-byte feature file (not a template). */
+as608_status_t as608_upload_feature_start(as608_t *ctx,
+                                         as608_char_buffer_t buffer,
+                                         as608_feature_file_t *output);
+
+/** PS_DownChar (0x09), ordinary 256-byte feature file (not a template). */
+as608_status_t as608_download_feature_start(as608_t *ctx,
+                                           as608_char_buffer_t buffer,
+                                           const as608_feature_file_t *input);
+
+/** PS_UpImage (0x0A): stream verified wire payload to caller's sink.
+ * UART format is two 4-bit pixels per byte; no assumed image dimensions.
+ * An exact byte count and END_DATA are required for success. Previously
+ * delivered fragments may remain in the sink if the job later fails.
+ */
+as608_status_t as608_upload_image_start(as608_t *ctx,
+                                       const as608_stream_sink_t *sink);
+
+/** PS_DownImage (0x0B): stream packed wire bytes from caller's source.
+ * Validate actual dimensions, size and completion behavior per firmware.
+ */
+as608_status_t as608_download_image_start(as608_t *ctx,
+                                         const as608_stream_source_t *source);
+
+/** PS_GenBinImage (0x1C): process ImageBuffer; upload separately. */
+as608_status_t as608_generate_binary_image_start(as608_t *ctx,
+                                                 as608_image_mode_t mode);
+
+/* ---- Configuration (PS_WriteReg 0x0E, typed register setters) ---- */
+
+/** Set register 4. baud_rate must be a supported multiple of 9600.
+ * Sensor ACK uses the old configuration (manual p. 19). On success,
+ * application must reconfigure its UART to the new rate before starting
+ * another job. No automatic baud guessing or HAL configuration.
+ */
+as608_status_t as608_set_baud_rate_start(as608_t *ctx, uint32_t baud_rate);
+
+/** Set register 5, level 1..5. */
+as608_status_t as608_set_security_level_start(as608_t *ctx,
+                                              as608_security_level_t level);
+
+/** Set register 6, code 0..3. */
+as608_status_t as608_set_packet_size_start(as608_t *ctx,
+                                           as608_packet_size_t size);
+
+/** PS_Port_Control (0x17): control the OTHER interface, not the active one.
+ * UART controls USB; USB controls UART. Requires verified variant support.
+ */
+as608_status_t as608_control_other_port_start(as608_t *ctx, bool enabled);
+
+/** Composite ReadINFpage (0x16) + descriptor decoding. */
+as608_status_t as608_read_device_info_start(as608_t *ctx,
+                                            as608_device_info_t *info);
+
+/* ---- Password, address and random number ---- */
+
+/** PS_SetPwd (0x12): change handshake password; verify separately. */
+as608_status_t as608_set_password_start(as608_t *ctx, uint32_t password);
+
+/** PS_GetRandomCode (0x14): raw random code, not a security guarantee. */
+as608_status_t as608_get_random_code_start(as608_t *ctx, uint32_t *code);
+
+/** PS_SetChipAddr (0x15): address provisioning, not arbitrary reassignment.
+ * Manual p. 23 specifies a default-address command and a new-address reply.
+ * Require verified firmware transition rules; commit the local address
+ * only on a validated successful ACK. An uncertain transition quarantines.
+ */
+as608_status_t as608_set_device_address_start(as608_t *ctx, uint32_t address);
+
+/* ---- User flash, GPIO and firmware maintenance ---- */
+
+/** PS_WriteNotepad (0x18): write the full 32-byte page. */
+as608_status_t as608_write_notepad_start(as608_t *ctx,
+                                         const as608_notepad_page_t *page);
+
+/** PS_ReadNotepad (0x19): data committed on a successful ACK only. */
+as608_status_t as608_read_notepad_start(as608_t *ctx,
+                                        as608_notepad_page_t *page);
+
+/** PS_UserGPIOCommand (0x1E): reserved/variant-specific. */
+as608_status_t as608_write_user_gpio_start(as608_t *ctx,
+                                           as608_gpio_request_t *request);
+
+/** PS_BurnCode (0x1A): high-risk and firmware-specific.
+ * Requires separate target validation and explicit application authorization.
+ * No automatic retry of programming after failure. Do not use a generic
+ * image or assume the module's bootloader/recovery behavior.
+ */
+as608_status_t as608_burn_code_start(as608_t *ctx,
+                                     const as608_firmware_request_t *request);
+
+/* ---- Host-managed composite operations (no extra wire opcodes) ---- */
+
+/** Capture twice with finger removal, GenChar, RegModel and StoreChar. */
+as608_status_t as608_enroll_two_scan_start(as608_t *ctx,
+                                          const as608_enroll_request_t *request);
+
+/** Capture, generate and search using the requested buffer/range. */
+as608_status_t as608_identify_range_start(as608_t *ctx, as608_search_t *search);
+
+/** Read capacity and index table(s) to find a free slot; no flash writes. */
+as608_status_t as608_find_free_slot_start(as608_t *ctx, as608_free_slot_t *slot);
+
+#endif /* AS608_DECLARE_PLANNED_API */
+
 #ifdef __cplusplus
 }
 #endif

@@ -8,6 +8,7 @@ This checklist tracks the host library against the Synochip AS60x Communication 
 - Unchecked: missing, incomplete, or awaiting the indicated validation.
 - Command coverage: **16/31 (51.6%)**; 15 commands remain. UpChar and DownChar are implemented with limited file-size support.
 - Implementation is not equivalent to hardware validation or universal firmware compatibility.
+- API design: all 31 documented opcodes have contracts in [as608.h](as608.h). The 15 missing commands are declarations only under `AS608_DECLARE_PLANNED_API`; they remain unchecked until implemented and tested.
 
 ## 1. Fingerprint acquisition and recognition
 
@@ -16,9 +17,9 @@ This checklist tracks the host library against the Synochip AS60x Communication 
 - [x] `0x03 PS_Match` — 1:1 comparison of character buffers and match score; `as608_match_buffers_start()`.
 - [x] `0x04 PS_Search` — 1:N database range search, PageID and score; `as608_search_start()`.
 - [x] `0x05 PS_RegModel` — Merge fingerprint features into a template; `as608_create_model_start()`.
-- [ ] `0x10 PS_Enroll` — Sensor-side automatic single-scan enrollment, free-slot selection and PageID.
-- [ ] `0x11 PS_Identify` — Automatic acquisition and identification; may update incomplete templates on a sufficiently strong match.
-- [ ] `0x1B PS_HighSpeedSearch` — High-speed database range search.
+- [ ] `0x10 PS_Enroll` — Sensor-side automatic single-scan enrollment, free-slot selection and PageID. Planned: `as608_enroll_start()`.
+- [ ] `0x11 PS_Identify` — Automatic acquisition and identification; may update incomplete templates on a sufficiently strong match. Planned: `as608_identify_start()`.
+- [ ] `0x1B PS_HighSpeedSearch` — High-speed database range search. Planned: `as608_high_speed_search_start()`.
 
 ## 2. Template and database management
 
@@ -36,15 +37,15 @@ Additional template capabilities:
 - [x] Both character buffer IDs.
 - [x] Opaque 512/768-byte templates with actual received length.
 - [x] Negotiated outbound packet size: 32/64/128/256 bytes.
-- [ ] Support ordinary 256-byte feature files described by the manual, separately from templates.
+- [ ] Support ordinary 256-byte feature files described by the manual, separately from templates. Planned: `as608_upload_feature_start()`, `as608_download_feature_start()`.
 - [ ] Verify other file lengths per firmware; do not assume arbitrary lengths.
 - [ ] Verify DownChar post-stream ACK behavior per firmware. Standalone download currently completes at physical TX drain; composite write also checks StoreChar ACK. The manual's workflow on printed p. 31 shows an additional ACK after data.
 
 ## 3. Image transfer and processing
 
-- [ ] `0x0A PS_UpImage` — Upload ImageBuffer to host.
-- [ ] `0x0B PS_DownImage` — Download image into ImageBuffer.
-- [ ] `0x1C PS_GenBinImage` — Generate binary, thinned or minutiae-marked thinned image.
+- [ ] `0x0A PS_UpImage` — Upload ImageBuffer to host. Planned: `as608_upload_image_start()`.
+- [ ] `0x0B PS_DownImage` — Download image into ImageBuffer. Planned: `as608_download_image_start()`.
+- [ ] `0x1C PS_GenBinImage` — Generate binary, thinned or minutiae-marked thinned image. Planned: `as608_generate_binary_image_start()`.
 - [ ] Stream large images without storing a complete image in MCU RAM.
 - [ ] Encode/decode packed UART image pixels (two 4-bit pixels per byte).
 - [ ] Verify image dimensions and transfer lengths per sensor.
@@ -53,24 +54,24 @@ Additional template capabilities:
 
 ## 4. System configuration and information
 
-- [ ] `0x0E PS_WriteReg` — Write baud multiplier, security level or packet-size register.
+- [ ] `0x0E PS_WriteReg` — Write baud multiplier, security level or packet-size register. Planned: `as608_set_baud_rate_start()`, `as608_set_security_level_start()`, `as608_set_packet_size_start()`.
 - [x] `0x0F PS_ReadSysPara` — Read 16-byte system parameters; `as608_read_parameters_start()`.
 - [x] `0x16 PS_ReadINFpage` — Read 512-byte flash information page; `as608_read_information_page_start()`.
-- [ ] `0x17 PS_Port_Control` — Enable/disable the other communication interface (UART/USB).
+- [ ] `0x17 PS_Port_Control` — Enable/disable the other communication interface (UART/USB). Planned: `as608_control_other_port_start()`.
 - [x] Read status register, sensor type, capacity, security level, address, packet-size code and baud multiplier.
 - [ ] Typed status flags: busy, pass, password verified, valid image.
 - [ ] Set baud rate (register 4) and synchronize host UART reconfiguration after ACK.
 - [ ] Set security level 1–5 (register 5).
 - [ ] Set packet-size code 0–3 (register 6).
-- [ ] Parse product, firmware, manufacturer and sensor descriptors from the information page where verified.
+- [ ] Parse product, firmware, manufacturer and sensor descriptors from the information page where verified. Planned: `as608_read_device_info_start()`.
 - [ ] Read-back and persistence verification for configuration writes.
 
 ## 5. Password, address and random number
 
-- [ ] `0x12 PS_SetPwd` — Change 32-bit handshake password.
+- [ ] `0x12 PS_SetPwd` — Change 32-bit handshake password. Planned: `as608_set_password_start()`.
 - [x] `0x13 PS_VfyPwd` — Verify 32-bit handshake password; `as608_verify_password_start()`.
-- [ ] `0x14 PS_GetRandomCode` — Read 32-bit random code.
-- [ ] `0x15 PS_SetChipAddr` — Set device address.
+- [ ] `0x14 PS_GetRandomCode` — Read 32-bit random code. Planned: `as608_get_random_code_start()`.
+- [ ] `0x15 PS_SetChipAddr` — Set device address. Planned: `as608_set_device_address_start()`.
 - [x] Configurable host-side address and strict received-address validation.
 - [ ] Handle address-change reply transition according to verified firmware behavior.
 - [ ] Password-change and verification workflow without logging credentials.
@@ -80,10 +81,10 @@ Handshake passwords and additive checksums are not encryption or authenticated t
 
 ## 6. User flash, GPIO and firmware maintenance
 
-- [ ] `0x18 PS_WriteNotepad` — Write 32-byte user flash page.
-- [ ] `0x19 PS_ReadNotepad` — Read 32-byte user flash page.
-- [ ] `0x1A PS_BurnCode` — Firmware/information-page programming; high-risk, variant-specific.
-- [ ] `0x1E PS_UserGPIOCommand` — User GPIO output control; reserved/variant-specific.
+- [ ] `0x18 PS_WriteNotepad` — Write 32-byte user flash page. Planned: `as608_write_notepad_start()`.
+- [ ] `0x19 PS_ReadNotepad` — Read 32-byte user flash page. Planned: `as608_read_notepad_start()`.
+- [ ] `0x1A PS_BurnCode` — Firmware/information-page programming; high-risk, variant-specific. Planned: `as608_burn_code_start()`.
+- [ ] `0x1E PS_UserGPIOCommand` — User GPIO output control; reserved/variant-specific. Planned: `as608_write_user_gpio_start()`.
 - [ ] Notepad pages 0–15; verify actual capacity.
 - [ ] Verify GPIO mapping and availability on the physical module.
 - [ ] Firmware-update support only with verified vendor procedure, compatible image and recovery plan.
@@ -103,9 +104,9 @@ The AS60x V1.0 command list does not establish their opcodes or availability on 
 
 - [x] Read stored template: LoadChar + UpChar; `as608_read_template_start()`.
 - [x] Write stored template: ReadSysPara + DownChar + StoreChar; `as608_write_template_start()`.
-- [ ] Complete two-scan enrollment FSM with finger removal, GenChar, RegModel and StoreChar.
-- [ ] Complete capture + GenChar + Search identification FSM.
-- [ ] Free-slot discovery using index table and database capacity.
+- [ ] Complete two-scan enrollment FSM with finger removal, GenChar, RegModel and StoreChar. Planned: `as608_enroll_two_scan_start()`.
+- [ ] Complete capture + GenChar + Search identification FSM. Planned: `as608_identify_range_start()`.
+- [ ] Free-slot discovery using index table and database capacity. Planned: `as608_find_free_slot_start()`.
 - [ ] Full database backup/restore with per-template outcomes.
 - [ ] Cross-sensor migration workflow with compatibility checks and partial-failure reporting.
 - [ ] Optional duplicate-finger detection before enrollment.
