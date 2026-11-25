@@ -184,16 +184,9 @@ typedef enum {
     AS608_FAILED    /**< Host-side error; inspect the result. */
 } as608_progress_t;
 
-/** @brief Caller-owned context; fields are private to the driver.
- * Zero-initialize before init. Do not copy or modify during operation.
- * All calls on a context are serialized by the application.
- */
+/** @brief Internal transport storage; owned by the enclosing device. */
 typedef struct {
-    as608_config_t config;
-    as608_state_t state;
-    as608_result_t result;
     uint32_t started_ms;
-    uint8_t step;
     uint8_t wire_phase;
     uint8_t tx_frame[267U];
     size_t tx_len;
@@ -205,6 +198,19 @@ typedef struct {
     size_t rx_body_pos;
     uint8_t rx_kind;
     size_t rx_payload_len;
+    size_t rx_limit;
+} as608_transaction_storage_t;
+
+/** @brief Caller-owned context; fields are private to the driver.
+ * Zero-initialize before init. Do not copy or modify during operation.
+ * All calls on a context are serialized by the application.
+ */
+typedef struct {
+    as608_config_t config;
+    as608_state_t state;
+    as608_result_t result;
+    uint8_t step;
+    as608_transaction_storage_t transaction;
     uint16_t page_id;
     uint16_t chunk_size;
     as608_char_buffer_t download_buffer;

@@ -11,9 +11,11 @@ transfer. The unified non-blocking port still needs hardware validation.
 ```text
 AS608_lib/
 ├── as608.h                       Public command API, types and context
-├── as608.c                       Single non-blocking command/transaction FSM
+├── as608.c                       Command FSM and public job lifecycle
+├── as608_transaction.h/.c         Internal non-blocking packet transport
 ├── as608_port.h                  Non-blocking UART port contract
 ├── as608_packet.h/.c              Internal packet codec and checksum
+├── test_as608_transaction.c      Independent transport tests
 ├── test_as608_packet.c           Packet tests
 ├── test_as608_commands.c         Full command and template regression tests
 ├── test_as608_async.c            Cooperative scheduling tests
@@ -32,6 +34,10 @@ Application (main loop / task)
          as608.h / as608.c
         start / process / result
               |
+              v
+       as608_transaction.h/.c
+        TX / RX / drain / deadline
+              |
       +-------+-------------------+
       |                           |
       v                           v
@@ -46,8 +52,10 @@ encode/decode/checksum            |
 ```
 
 The packet codec is pure software; the port does not depend on it.
-There is one command/transaction engine and one port contract, not parallel
-engines. A job owns its context until completion or quarantine.
+The command layer owns command sequencing, ACK semantics and job lifecycle.
+The transaction layer owns partial packet I/O, checksum validation and the
+single job deadline; it returns SENT, RECEIVED, DRAINED or FAULT events.
+There is one non-blocking engine and one port contract, not parallel engines. A job owns its context until completion or quarantine.
 
 ```text
 start -> BUSY -> TX -> RX_HEADER -> RX_BODY -> verify -> next phase
@@ -116,14 +124,14 @@ Template interoperability across firmware variants is not guaranteed.
 
 ## Build and test
 
-Add `as608.c` and `as608_packet.c` to the Keil project and include the root.
+Add `as608.c`, `as608_transaction.c` and `as608_packet.c` to the Keil project and include the root.
 Do not link host test files (each contains a main). Supply the platform port;
 STM32 HAL IT/DMA integration is not yet provided.
 
 ```sh
 mkdir -p build
-for suite in packet commands async async_faults; do
-  cc -std=c11 -Wall -Wextra -Werror -pedantic -I. as608_packet.c as608.c test_as608_${suite}.c -o build/test_${suite}
+for suite in packet transaction commands async async_faults; do
+  cc -std=c11 -Wall -Wextra -Werror -pedantic -I. as608_packet.c as608_transaction.c as608.c test_as608_${suite}.c -o build/test_${suite}
   ./build/test_${suite}
 done
 ```

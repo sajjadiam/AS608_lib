@@ -4,9 +4,12 @@ Status: Accepted architecture; host CI and target validation tracked separately.
 
 ## Decision
 
-One C11 non-blocking command and transaction engine in as608.c, one public
+One C11 non-blocking engine: command sequencing in as608.c, generic packet
+transport and deadline in as608_transaction.c, one public
 header as608.h, one UART callback contract in as608_port.h, one independent
-packet codec. No production waiting loops or parallel synchronous API. The
+packet codec. Transport exposes packet-level events and has no command or
+ACK interpretation. Command layer owns job lifecycle and quarantine on faults.
+No production waiting loops or parallel synchronous API. The
 former implementation remains available only in Git history. Tests drive the
 same production engine and may use bounded test-only polling helpers.
 
