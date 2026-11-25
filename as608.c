@@ -14,6 +14,7 @@ enum as608_command {
     CMD_MATCH = 0x03,
     CMD_SEARCH = 0x04,
     CMD_REG_MODEL = 0x05,
+    CMD_LOAD_CHAR = 0x07,
     CMD_READ_PARAMS = 0x0F,
     CMD_VERIFY_PASSWORD = 0x13,
     CMD_READ_INFO = 0x16,
@@ -646,6 +647,35 @@ as608_status_t as608_search_start(as608_t *ctx, as608_search_t *search) {
  * ========================================================================= */
 
 /* =========================================================================
+ * API 16: as608_load_template_start
+ * =========================================================================
+ * PS_LoadChar (0x07), AS60x Communication Manual V1.0, pp. 15–16.
+ * Loads a flash template into the selected sensor character buffer.
+ */
+
+/* Build a page-addressed command with a buffer ID and big-endian PageID. */
+static command_t page_command(uint8_t code, as608_char_buffer_t buffer, uint16_t page) {
+    command_t command = {{code, (uint8_t)buffer}, 4U, STEP_SIMPLE_ACK};
+    store_u16(command.bytes + 2U, page);
+
+    return command;
+}
+
+as608_status_t as608_load_template_start(as608_t *ctx, as608_char_buffer_t buffer, uint16_t page_id) {
+    if (!valid_buffer(buffer)) {
+        return AS608_STATUS_INVALID_ARG;
+    }
+
+    const command_t command = page_command(CMD_LOAD_CHAR, buffer, page_id);
+
+    return launch(ctx, &command);
+}
+
+/* =========================================================================
+ * END API 16
+ * ========================================================================= */
+
+/* =========================================================================
  * API 02: as608_process
  * =========================================================================
  * Keep the process dispatcher after the active command API sections so
@@ -780,27 +810,13 @@ as608_progress_t as608_process(as608_t *ctx) {
 
 // Remaining command opcodes; migrate into enum as608_command when needed.
 //     CMD_STORE_CHAR = 0x06,
-//     CMD_LOAD_CHAR = 0x07, CMD_UP_CHAR = 0x08, CMD_DOWN_CHAR = 0x09,
+//     CMD_UP_CHAR = 0x08, CMD_DOWN_CHAR = 0x09,
 //     CMD_DELETE_CHAR = 0x0C, CMD_EMPTY = 0x0D,
 // 
 // static bool supported_size(size_t length)
 // {
 //     return (length == AS608_TEMPLATE_512_BYTES) ||
 //            (length == AS608_TEMPLATE_768_BYTES);
-// }
-// 
-// static command_t page_command(uint8_t code, as608_char_buffer_t buffer, uint16_t page)
-// {
-//     return (command_t){{code, (uint8_t)buffer,
-//         (uint8_t)(page >> 8U), (uint8_t)page}, 4U, STEP_SIMPLE_ACK};
-// }
-// 
-// as608_status_t as608_load_template_start(as608_t *ctx, as608_char_buffer_t buffer,
-//                                        uint16_t page_id)
-// {
-//     if (!valid_buffer(buffer)) return AS608_STATUS_INVALID_ARG;
-//     const command_t command = page_command(CMD_LOAD_CHAR, buffer, page_id);
-//     return launch(ctx, &command);
 // }
 // 
 // as608_status_t as608_store_template_start(as608_t *ctx, as608_char_buffer_t buffer,

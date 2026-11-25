@@ -656,12 +656,45 @@ as608_status_t as608_create_model_start(as608_t *ctx);
  */
 as608_status_t as608_search_start(as608_t *ctx, as608_search_t *search);
 
-/* Incremental rebuild: APIs 01–15 are defined.
+/**
+ * @brief Start loading a flash template (PS_LoadChar, opcode 0x07).
+ *
+ * @details Reads the template at PageID into the selected internal
+ * CharBuffer. Encodes BufferID and a 16-bit big-endian PageID. The
+ * response is a one-byte confirmation ACK; no template data is
+ * transferred to the host and no flash write is requested.
+ *
+ * @param[in,out] ctx Initialized caller-owned device context.
+ * @param[in] buffer Destination AS608_CHAR_BUFFER_1 or AS608_CHAR_BUFFER_2.
+ * @param[in] page_id Flash database slot to load.
+ * @retval AS608_STATUS_OK Job admitted; load is not yet confirmed.
+ * @retval AS608_STATUS_INVALID_ARG Null context or unsupported buffer ID.
+ * @retval AS608_STATUS_NOT_INITIALIZED Context is not initialized.
+ * @retval AS608_STATUS_BUSY Another job owns the context.
+ * @retval AS608_STATUS_RECOVERY_REQUIRED Link is quarantined.
+ * @pre Serialize calls sharing ctx. Choose a PageID within the actual
+ * sensor capacity. The driver does not cache or enforce that capacity;
+ * the sensor reports an invalid page or template.
+ * @post On admission, state is BUSY and the job deadline starts.
+ * Rejected admission leaves the context and previous result unchanged.
+ * @note Check both terminal result fields. AS608_ACK_OK means the
+ * selected buffer now contains the loaded template. AS608_ACK_PACKET_ERROR
+ * (0x01), AS608_ACK_INVALID_PAGE (0x0B) and AS608_ACK_TEMPLATE_ERROR
+ * (0x0C) are sensor results, not host transport faults. After failure,
+ * do not assume the destination buffer contains the requested template.
+ * No automatic upload or retry is performed.
+ * @see as608_read_parameters_start
+ * @see as608_upload_template_start
+ * @see as608_process
+ * @see as608_get_result
+ * @see AS60x Communication Manual V1.0, printed pages 15–16.
+ */
+as608_status_t as608_load_template_start(as608_t *ctx, as608_char_buffer_t buffer, uint16_t page_id);
+
+/* Incremental rebuild: APIs 01–16 are defined.
  * The following API declarations remain contracts until restored.
  * See FEATURES.md.
  */
-as608_status_t as608_load_template_start(as608_t *ctx, as608_char_buffer_t buffer,
-                                       uint16_t page_id);
 as608_status_t as608_upload_template_start(as608_t *ctx, as608_char_buffer_t buffer,
                                          as608_template_buffer_t *output);
 as608_status_t as608_download_template_start(as608_t *ctx, as608_char_buffer_t buffer,

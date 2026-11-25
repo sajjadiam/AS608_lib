@@ -27,10 +27,11 @@ This checklist tracks the host library against the Synochip AS60x Communication 
 - [x] API 13: `as608_match_buffers_start()` — PS_Match (0x03), 16-bit score on successful 1:1 comparison and dedicated tests.
 - [x] API 14: `as608_create_model_start()` — PS_RegModel (0x05), model generation in both character buffers and dedicated tests.
 - [x] API 15: `as608_search_start()` — PS_Search (0x04), validated search range, PageID and score, dedicated tests.
-- [ ] API 16: `as608_load_template_start()`.
+- [x] API 16: `as608_load_template_start()` — PS_LoadChar (0x07), validated destination buffer and page-addressed command tests.
+- [ ] API 17: `as608_upload_template_start()`.
 - [ ] Remaining command APIs, restored individually in header order.
 
-Active wire-command coverage: **10/31** (PS_VfyPwd 0x13, PS_ReadSysPara 0x0F, PS_ValidTempleteNum 0x1D, PS_ReadIndexTable 0x1F, PS_ReadINFpage 0x16, PS_GetImage 0x01, PS_GenChar 0x02, PS_Match 0x03, PS_RegModel 0x05, PS_Search 0x04).
+Active wire-command coverage: **11/31** (PS_VfyPwd 0x13, PS_ReadSysPara 0x0F, PS_ValidTempleteNum 0x1D, PS_ReadIndexTable 0x1F, PS_ReadINFpage 0x16, PS_GetImage 0x01, PS_GenChar 0x02, PS_Match 0x03, PS_RegModel 0x05, PS_Search 0x04, PS_LoadChar 0x07).
 The 16/31 command coverage and checked items below describe the preserved
 pre-rebuild baseline (commit 53425e4), not current linkability except for
 APIs explicitly restored above.

@@ -55,3 +55,5 @@ jobs:
           ./build/test_create_model
           ${{ matrix.compiler }} -std=c11 -Wall -Wextra -Werror -pedantic -I. as608_packet.c as608_transaction.c as608.c test_as608_search.c -o build/test_search
           ./build/test_search
+          ${{ matrix.compiler }} -std=c11 -Wall -Wextra -Werror -pedantic -I. as608_packet.c as608_transaction.c as608.c test_as608_load_template.c -o build/test_load_template
+          ./build/test_load_template
