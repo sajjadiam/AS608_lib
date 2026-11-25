@@ -1,0 +1,160 @@
+# AS608 Feature Checklist
+
+Baseline: [Core e9218ec](https://github.com/sajjadiam/AS608_lib/commit/e9218ecd362b254b4e8d1de9e199825fbf42a173) — 2026-11-25.
+
+This checklist tracks the host library against the Synochip AS60x Communication Manual V1.0 (April 2010), checked against the current [public API](as608.h) and [implementation](as608.c).
+
+- Checked: implemented in the non-blocking core, within the stated scope.
+- Unchecked: missing, incomplete, or awaiting the indicated validation.
+- Command coverage: **16/31 (51.6%)**; 15 commands remain. UpChar and DownChar are implemented with limited file-size support.
+- Implementation is not equivalent to hardware validation or universal firmware compatibility.
+
+## 1. Fingerprint acquisition and recognition
+
+- [x] `0x01 PS_GetImage` — Capture fingerprint image into ImageBuffer; `as608_capture_image_start()`.
+- [x] `0x02 PS_GenChar` — Extract features into CharBuffer1 or CharBuffer2; `as608_generate_character_start()`.
+- [x] `0x03 PS_Match` — 1:1 comparison of character buffers and match score; `as608_match_buffers_start()`.
+- [x] `0x04 PS_Search` — 1:N database range search, PageID and score; `as608_search_start()`.
+- [x] `0x05 PS_RegModel` — Merge fingerprint features into a template; `as608_create_model_start()`.
+- [ ] `0x10 PS_Enroll` — Sensor-side automatic single-scan enrollment, free-slot selection and PageID.
+- [ ] `0x11 PS_Identify` — Automatic acquisition and identification; may update incomplete templates on a sufficiently strong match.
+- [ ] `0x1B PS_HighSpeedSearch` — High-speed database range search.
+
+## 2. Template and database management
+
+- [x] `0x06 PS_StoreChar` — Store a character buffer at flash PageID; `as608_store_template_start()`.
+- [x] `0x07 PS_LoadChar` — Load a stored template into a character buffer; `as608_load_template_start()`.
+- [x] `0x08 PS_UpChar` — Sensor-to-host template upload, 512/768 bytes only; `as608_upload_template_start()`.
+- [x] `0x09 PS_DownChar` — Host-to-sensor template download, 512/768 bytes only; `as608_download_template_start()`.
+- [x] `0x0C PS_DeletChar` — Delete a consecutive range of templates; `as608_delete_templates_start()`.
+- [x] `0x0D PS_Empty` — Erase the fingerprint database; `as608_empty_database_start()`.
+- [x] `0x1D PS_ValidTempleteNum` — Count valid templates; `as608_get_template_count_start()`.
+- [x] `0x1F PS_ReadIndexTable` — Read 32-byte occupancy bitmap per 256 slots, index pages 0–3; `as608_read_index_table_start()`. Manual marks this command reserved in the detailed description; verify on target firmware.
+
+Additional template capabilities:
+
+- [x] Both character buffer IDs.
+- [x] Opaque 512/768-byte templates with actual received length.
+- [x] Negotiated outbound packet size: 32/64/128/256 bytes.
+- [ ] Support ordinary 256-byte feature files described by the manual, separately from templates.
+- [ ] Verify other file lengths per firmware; do not assume arbitrary lengths.
+- [ ] Verify DownChar post-stream ACK behavior per firmware. Standalone download currently completes at physical TX drain; composite write also checks StoreChar ACK. The manual's workflow on printed p. 31 shows an additional ACK after data.
+
+## 3. Image transfer and processing
+
+- [ ] `0x0A PS_UpImage` — Upload ImageBuffer to host.
+- [ ] `0x0B PS_DownImage` — Download image into ImageBuffer.
+- [ ] `0x1C PS_GenBinImage` — Generate binary, thinned or minutiae-marked thinned image.
+- [ ] Stream large images without storing a complete image in MCU RAM.
+- [ ] Encode/decode packed UART image pixels (two 4-bit pixels per byte).
+- [ ] Verify image dimensions and transfer lengths per sensor.
+- [ ] Support GenBinImage modes 0, 1 and 2 and upload results.
+- [ ] Optional host-side PGM export and image/feature-quality diagnostics.
+
+## 4. System configuration and information
+
+- [ ] `0x0E PS_WriteReg` — Write baud multiplier, security level or packet-size register.
+- [x] `0x0F PS_ReadSysPara` — Read 16-byte system parameters; `as608_read_parameters_start()`.
+- [x] `0x16 PS_ReadINFpage` — Read 512-byte flash information page; `as608_read_information_page_start()`.
+- [ ] `0x17 PS_Port_Control` — Enable/disable the other communication interface (UART/USB).
+- [x] Read status register, sensor type, capacity, security level, address, packet-size code and baud multiplier.
+- [ ] Typed status flags: busy, pass, password verified, valid image.
+- [ ] Set baud rate (register 4) and synchronize host UART reconfiguration after ACK.
+- [ ] Set security level 1–5 (register 5).
+- [ ] Set packet-size code 0–3 (register 6).
+- [ ] Parse product, firmware, manufacturer and sensor descriptors from the information page where verified.
+- [ ] Read-back and persistence verification for configuration writes.
+
+## 5. Password, address and random number
+
+- [ ] `0x12 PS_SetPwd` — Change 32-bit handshake password.
+- [x] `0x13 PS_VfyPwd` — Verify 32-bit handshake password; `as608_verify_password_start()`.
+- [ ] `0x14 PS_GetRandomCode` — Read 32-bit random code.
+- [ ] `0x15 PS_SetChipAddr` — Set device address.
+- [x] Configurable host-side address and strict received-address validation.
+- [ ] Handle address-change reply transition according to verified firmware behavior.
+- [ ] Password-change and verification workflow without logging credentials.
+- [ ] Characterize RNG guarantees before cryptographic use.
+
+Handshake passwords and additive checksums are not encryption or authenticated transport.
+
+## 6. User flash, GPIO and firmware maintenance
+
+- [ ] `0x18 PS_WriteNotepad` — Write 32-byte user flash page.
+- [ ] `0x19 PS_ReadNotepad` — Read 32-byte user flash page.
+- [ ] `0x1A PS_BurnCode` — Firmware/information-page programming; high-risk, variant-specific.
+- [ ] `0x1E PS_UserGPIOCommand` — User GPIO output control; reserved/variant-specific.
+- [ ] Notepad pages 0–15; verify actual capacity.
+- [ ] Verify GPIO mapping and availability on the physical module.
+- [ ] Firmware-update support only with verified vendor procedure, compatible image and recovery plan.
+
+## 7. Firmware-specific extensions (not part of the 31-command count)
+
+The following require a matching firmware manual and target verification.
+The AS60x V1.0 command list does not establish their opcodes or availability on our AS608_QCCF modules.
+
+- [ ] Software reset command.
+- [ ] Sleep/standby and wake-on-finger or touch-event integration.
+- [ ] LED/illumination control, including Aura LED where available.
+- [ ] Dedicated serial-number, firmware-version or product-information commands beyond ReadINFpage.
+- [ ] Additional vendor-specific enrollment, recognition and diagnostic commands.
+
+## 8. Composite host-library operations (not additional opcodes)
+
+- [x] Read stored template: LoadChar + UpChar; `as608_read_template_start()`.
+- [x] Write stored template: ReadSysPara + DownChar + StoreChar; `as608_write_template_start()`.
+- [ ] Complete two-scan enrollment FSM with finger removal, GenChar, RegModel and StoreChar.
+- [ ] Complete capture + GenChar + Search identification FSM.
+- [ ] Free-slot discovery using index table and database capacity.
+- [ ] Full database backup/restore with per-template outcomes.
+- [ ] Cross-sensor migration workflow with compatibility checks and partial-failure reporting.
+- [ ] Optional duplicate-finger detection before enrollment.
+
+Primitive commands for most of these workflows already exist; dedicated composite APIs do not.
+
+## 9. Core architecture and transport
+
+- [x] Single ISO C11 cooperative non-blocking core.
+- [x] Independent command, transaction, packet and port layers.
+- [x] Independent transaction context and common low-level types.
+- [x] Caller-owned static allocation; no heap.
+- [x] Multiple independent sensor contexts.
+- [x] Packet header, address, kind, length and additive-checksum validation.
+- [x] Partial TX/RX, zero-progress handling and bounded process calls.
+- [x] Single wrap-safe operation-wide deadline.
+- [x] Physical TX drain callback contract.
+- [x] Separate host status and raw sensor ACK.
+- [x] Abort, quarantine and external recovery acknowledgment.
+- [ ] STM32F103 interrupt/DMA UART adapter with owned TX queue, RX ring and error propagation.
+- [ ] Non-blocking physical reset/power-cycle recovery implementation.
+- [ ] USB transport adapter for supported module variants.
+- [ ] Target concurrency, reactive-sensor mocks, sanitizer and fuzz coverage.
+
+## 10. Validation and release
+
+- [x] [GCC/Clang host CI](https://github.com/sajjadiam/AS608_lib/actions/runs/45580355200) for baseline core.
+- [x] Independent packet and transaction builds/tests.
+- [x] Host command, template and fault regression tests.
+- [x] Historical hardware evidence: 768-byte transfer and recognition on two AS608_QCCF modules using the former driver.
+- [ ] Current non-blocking core hardware validation on STM32F103C8T6.
+- [ ] Two independent USART1/USART2 sessions under load.
+- [ ] Repeat enrollment, recognition and 512/768-byte transfers as supported.
+- [ ] Verify supported commands, packet sizes, timings and feature lengths for each firmware.
+- [ ] Target fault injection: late ACK, timeout, UART errors, overflow and physical recovery.
+- [ ] Document RAM consumption, service latency and firmware compatibility matrix.
+
+## Recommended development order
+
+1. STM32F103 port and current-core hardware validation.
+2. HighSpeedSearch, system settings, password and address configuration.
+3. Automatic enrollment/identification and host composite workflows.
+4. Ordinary feature files, image streaming, GenBinImage and notepad.
+5. Optional USB, GPIO, power and maintenance functions after variant verification.
+
+## References
+
+1. Synochip, *AS60x fingerprint recognition SOC Communication Manual V1.0* (AS60x 指纹识别 SOC 通讯手册), April 2010. Printed pp. 2–7 (configuration, buffers), pp. 8–10 (31 commands), pp. 11–28 (wire protocol and commands), pp. 29–34 (workflows).
+2. Synochip, *AS608 Processor Datasheet*, v1.00, September 2015, sections 4 and 7. Processor peripherals are not necessarily accessible through module UART commands.
+3. Repository: [as608.h](as608.h), [as608.c](as608.c), [as608_transaction.c](as608_transaction.c), [as608_port.h](as608_port.h).
+
+Manual caveats: several entries are reserved or legacy PS1802-specific. Notepad total sizes conflict in the prose (16 × 32-byte page layout gives 512 bytes); ReadSysPara contains a conflicting packet-size code 1 value (WriteReg specifies 64 bytes). Verify these on target. No claim is made that every AS608 module implements every AS60x command.
