@@ -29,3 +29,5 @@ jobs:
           ./build/test_init
           ${{ matrix.compiler }} -std=c11 -Wall -Wextra -Werror -pedantic -I. as608_packet.c as608_transaction.c as608.c test_as608_process.c -o build/test_process
           ./build/test_process
+          ${{ matrix.compiler }} -std=c11 -Wall -Wextra -Werror -pedantic -I. as608_packet.c as608_transaction.c as608.c test_as608_get_result.c -o build/test_get_result
+          ./build/test_get_result

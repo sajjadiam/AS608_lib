@@ -242,15 +242,32 @@ as608_status_t as608_init(as608_t *ctx, const as608_config_t *config);
  */
 as608_progress_t as608_process(as608_t *ctx);
 
-/* Incremental rebuild: as608_init() and as608_process() are defined.
- * The following API declarations are retained as contracts and are not
- * linkable until their implementations are restored. See FEATURES.md.
- */
-
-/** @brief Copy the terminal result; false before a job terminates.
- * COMPLETE does not imply ACK_OK. Check both status and confirmation.
+/**
+ * @brief Copy the result of the most recent terminal job.
+ *
+ * @details Reads the stored result only in DONE or DESYNCHRONIZED.
+ * Does not advance the job, clear its result, change state, access UART,
+ * or read the clock. Repeated calls return the same result until a later
+ * operation changes the context.
+ *
+ * @param[in] ctx Device context.
+ * @param[out] result Writable destination for the result snapshot.
+ * @retval true A terminal result was copied (including negative sensor
+ * ACKs and host-side errors).
+ * @retval false Null argument or a context outside the terminal states.
+ * @pre Calls sharing the context must be serialized.
+ * @post On false, the destination (if valid) is unchanged.
+ * @note A true return indicates availability, not command success.
+ * Check status first; confirmation is meaningful only when status is
+ * AS608_STATUS_OK. A negative sensor confirmation is not a host error.
+ * @see as608_process
  */
 bool as608_get_result(const as608_t *ctx, as608_result_t *result);
+
+/* Incremental rebuild: APIs 01–03 are defined.
+ * The following API declarations remain contracts until restored.
+ * See FEATURES.md.
+ */
 
 /** @brief Abort an in-flight job and quarantine its link. */
 as608_status_t as608_abort(as608_t *ctx);

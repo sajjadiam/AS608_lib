@@ -140,6 +140,27 @@ as608_progress_t as608_process(as608_t *ctx) {
  * ========================================================================= */
 
 /* =========================================================================
+ * API 03: as608_get_result
+ * ========================================================================= */
+
+bool as608_get_result(const as608_t *ctx, as608_result_t *result) {
+    if (!ctx || !result) {
+        return false;
+    }
+
+    if ((ctx->state != AS608_STATE_DONE) && (ctx->state != AS608_STATE_DESYNCHRONIZED)) {
+        return false;
+    }
+
+    *result = ctx->result;
+    return true;
+}
+
+/* =========================================================================
+ * END API 03
+ * ========================================================================= */
+
+/* =========================================================================
  * INACTIVE REFERENCE — incremental API rebuild
  *
  * Previous implementation from commit 53425e4.
@@ -605,17 +626,6 @@ as608_progress_t as608_process(as608_t *ctx) {
 //     const command_t command = page_command(CMD_STORE_CHAR,
 //         ctx->download_buffer, ctx->page_id);
 //     return next_or_fault(ctx, command_start(ctx, &command));
-// }
-// 
-// bool as608_get_result(const as608_t *ctx, as608_result_t *result)
-// {
-//     if (ctx == NULL || result == NULL ||
-//         (ctx->state != AS608_STATE_DONE &&
-//          ctx->state != AS608_STATE_DESYNCHRONIZED)) {
-//         return false;
-//     }
-//     *result = ctx->result;
-//     return true;
 // }
 // 
 // as608_status_t as608_abort(as608_t *ctx)
