@@ -13,7 +13,10 @@ The five lifecycle APIs and two command APIs, `as608_verify_password_start()`
 from as608.c. Process supports simple ACK and system-parameter ACK phases. The previous implementation is preserved as line
 comments below the active sections, excluding migrated definitions. Each subsequent
 API will be restored in header order, with its required static helpers
-above it and explicit section boundaries. Shared helpers remain unique.
+above it and explicit section boundaries. The process dispatcher (API 02)
+is placed after active command sections so reply handlers need no forward
+declarations. Shared lifecycle helpers and named command/step enums are
+at the top of as608.c. Add new opcodes to the single command enum.
 The packet and transaction layers are unchanged.
 
 This is intentionally an incomplete, non-deployable command layer:

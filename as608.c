@@ -5,6 +5,49 @@
 #include <string.h>
 
 /* =========================================================================
+ * Internal command opcodes and job phases
+ * ========================================================================= */
+
+enum as608_command {
+    CMD_READ_PARAMS = 0x0F,
+    CMD_VERIFY_PASSWORD = 0x13
+};
+
+enum as608_step {
+    STEP_SIMPLE_ACK = 1,
+    STEP_LOAD_ACK,
+    STEP_UP_ACK,
+    STEP_UP_DATA,
+    STEP_INFO_ACK,
+    STEP_INFO_DATA,
+    STEP_PARAMS_ACK,
+    STEP_DOWN_ACK,
+    STEP_DOWN_DATA,
+    STEP_READ_PARAMS_ACK,
+    STEP_U16_ACK,
+    STEP_SEARCH_ACK,
+    STEP_INDEX_ACK
+};
+
+/* =========================================================================
+ * Shared job lifecycle helpers
+ * ========================================================================= */
+
+static as608_progress_t quarantine(as608_t *ctx, as608_status_t status) {
+    ctx->result.status = status;
+    ctx->result.confirmation = 0U;
+    ctx->state = AS608_STATE_DESYNCHRONIZED;
+    return AS608_FAILED;
+}
+
+static as608_progress_t finish(as608_t *ctx, uint8_t ack) {
+    ctx->result.status = AS608_STATUS_OK;
+    ctx->result.confirmation = ack;
+    ctx->state = AS608_STATE_DONE;
+    return AS608_COMPLETE;
+}
+
+/* =========================================================================
  * API 01: as608_init
  * =========================================================================
  * No local static helper is needed. Configuration validation and transport
@@ -42,109 +85,6 @@ as608_status_t as608_init(as608_t *ctx, const as608_config_t *config) {
 
 /* =========================================================================
  * END API 01
- * ========================================================================= */
-
-/* =========================================================================
- * API 02: as608_process
- * =========================================================================
- * Shared command-state helpers live here, above their first active user.
- * Simple ACK and system-parameter ACK paths are active. Command-specific
- * reply handlers are defined in their own API sections.
- */
-
-enum {
-    STEP_SIMPLE_ACK = 1,
-    STEP_LOAD_ACK,
-    STEP_UP_ACK,
-    STEP_UP_DATA,
-    STEP_INFO_ACK,
-    STEP_INFO_DATA,
-    STEP_PARAMS_ACK,
-    STEP_DOWN_ACK,
-    STEP_DOWN_DATA,
-    STEP_READ_PARAMS_ACK,
-    STEP_U16_ACK,
-    STEP_SEARCH_ACK,
-    STEP_INDEX_ACK
-};
-
-static as608_progress_t quarantine(as608_t *ctx, as608_status_t status) {
-    ctx->result.status = status;
-    ctx->result.confirmation = 0U;
-    ctx->state = AS608_STATE_DESYNCHRONIZED;
-    return AS608_FAILED;
-}
-
-static as608_progress_t finish(as608_t *ctx, uint8_t ack) {
-    ctx->result.status = AS608_STATUS_OK;
-    ctx->result.confirmation = ack;
-    ctx->state = AS608_STATE_DONE;
-    return AS608_COMPLETE;
-}
-
-static as608_progress_t accept_simple_ack(as608_t *ctx) {
-    const as608_transaction_frame_t frame = as608_transaction_received(&ctx->transaction);
-
-    if ((frame.kind != AS608_PACKET_ACK) || (frame.length != 1U)) {
-        return quarantine(ctx, AS608_STATUS_UNEXPECTED_REPLY);
-    }
-
-    return finish(ctx, frame.data[0]);
-}
-
-/* API 07 reply handler; defined with its command-specific helpers below. */
-static as608_progress_t accept_parameters_ack(as608_t *ctx);
-
-as608_progress_t as608_process(as608_t *ctx) {
-    if (!ctx) {
-        return AS608_FAILED;
-    }
-
-    if (ctx->state == AS608_STATE_DONE) {
-        return AS608_COMPLETE;
-    }
-
-    if (ctx->state != AS608_STATE_BUSY) {
-        return AS608_FAILED;
-    }
-
-    if ((ctx->step != STEP_SIMPLE_ACK) && (ctx->step != STEP_READ_PARAMS_ACK)) {
-        return quarantine(ctx, AS608_STATUS_UNEXPECTED_REPLY);
-    }
-
-    const as608_transaction_result_t result = as608_transaction_process(&ctx->transaction);
-
-    switch (result.event) {
-        case AS608_TXN_PENDING: {
-            return AS608_PENDING;
-        }
-
-        case AS608_TXN_SENT: {
-            const size_t limit = (ctx->step == STEP_READ_PARAMS_ACK) ? 17U : 1U;
-            as608_transaction_receive(&ctx->transaction, limit);
-            return AS608_PENDING;
-        }
-
-        case AS608_TXN_RECEIVED: {
-            if (ctx->step == STEP_READ_PARAMS_ACK) {
-                return accept_parameters_ack(ctx);
-            }
-
-            return accept_simple_ack(ctx);
-        }
-
-        case AS608_TXN_FAULT: {
-            return quarantine(ctx, result.status);
-        }
-
-        default: {
-            return quarantine(ctx, AS608_STATUS_UNEXPECTED_REPLY);
-        }
-    }
-}
-
-/* =========================================================================
- * END API 02
  * ========================================================================= */
 
 /* =========================================================================
@@ -236,10 +176,6 @@ as608_status_t as608_confirm_reset(as608_t *ctx) {
  * Command admission and launch helpers are shared by later start APIs.
  */
 
-enum {
-    CMD_VERIFY_PASSWORD = 0x13
-};
-
 typedef struct {
     uint8_t bytes[6U];
     size_t length;
@@ -326,10 +262,6 @@ as608_status_t as608_verify_password_start(as608_t *ctx, uint32_t password) {
  * Successful ACK: confirmation byte followed by 16 parameter bytes.
  */
 
-enum {
-    CMD_READ_PARAMS = 0x0F
-};
-
 static uint16_t load_u16(const uint8_t *bytes) {
     return (uint16_t)(((uint16_t)bytes[0] << 8U) | (uint16_t)bytes[1]);
 }
@@ -393,22 +325,91 @@ as608_status_t as608_read_parameters_start(as608_t *ctx, as608_parameters_t *out
  * ========================================================================= */
 
 /* =========================================================================
+ * API 02: as608_process
+ * =========================================================================
+ * Keep the process dispatcher after the active command API sections so
+ * their static reply handlers are defined before use.
+ * ========================================================================= */
+
+static as608_progress_t accept_simple_ack(as608_t *ctx) {
+    const as608_transaction_frame_t frame = as608_transaction_received(&ctx->transaction);
+
+    if ((frame.kind != AS608_PACKET_ACK) || (frame.length != 1U)) {
+        return quarantine(ctx, AS608_STATUS_UNEXPECTED_REPLY);
+    }
+
+    return finish(ctx, frame.data[0]);
+}
+
+as608_progress_t as608_process(as608_t *ctx) {
+    if (!ctx) {
+        return AS608_FAILED;
+    }
+
+    if (ctx->state == AS608_STATE_DONE) {
+        return AS608_COMPLETE;
+    }
+
+    if (ctx->state != AS608_STATE_BUSY) {
+        return AS608_FAILED;
+    }
+
+    if ((ctx->step != STEP_SIMPLE_ACK) && (ctx->step != STEP_READ_PARAMS_ACK)) {
+        return quarantine(ctx, AS608_STATUS_UNEXPECTED_REPLY);
+    }
+
+    const as608_transaction_result_t result = as608_transaction_process(&ctx->transaction);
+
+    switch (result.event) {
+        case AS608_TXN_PENDING: {
+            return AS608_PENDING;
+        }
+
+        case AS608_TXN_SENT: {
+            const size_t limit = (ctx->step == STEP_READ_PARAMS_ACK) ? 17U : 1U;
+            as608_transaction_receive(&ctx->transaction, limit);
+            return AS608_PENDING;
+        }
+
+        case AS608_TXN_RECEIVED: {
+            if (ctx->step == STEP_READ_PARAMS_ACK) {
+                return accept_parameters_ack(ctx);
+            }
+
+            return accept_simple_ack(ctx);
+        }
+
+        case AS608_TXN_FAULT: {
+            return quarantine(ctx, result.status);
+        }
+
+        default: {
+            return quarantine(ctx, AS608_STATUS_UNEXPECTED_REPLY);
+        }
+    }
+}
+
+/* =========================================================================
+ * END API 02
+ * ========================================================================= */
+
+/* =========================================================================
  * INACTIVE REFERENCE — incremental API rebuild
  *
  * Previous implementation from commit 53425e4.
  * Move/review one API and its required helpers at a time into active sections
  * above; remove migrated definitions from this reference. Shared helpers
- * are defined once, above their first active user. Never compile this block.
+ * are defined once, above their first active user. Insert new API sections
+ * before API 02 (process dispatcher). Never compile this block.
  * ========================================================================= */
 
-// enum {
+// Remaining command opcodes; migrate into enum as608_command when needed.
 //     CMD_GET_IMAGE = 0x01, CMD_GEN_CHAR = 0x02, CMD_MATCH = 0x03,
 //     CMD_SEARCH = 0x04, CMD_REG_MODEL = 0x05, CMD_STORE_CHAR = 0x06,
 //     CMD_LOAD_CHAR = 0x07, CMD_UP_CHAR = 0x08, CMD_DOWN_CHAR = 0x09,
 //     CMD_DELETE_CHAR = 0x0C, CMD_EMPTY = 0x0D,
 //     CMD_READ_INFO = 0x16,
 //     CMD_COUNT = 0x1D, CMD_READ_INDEX = 0x1F
-// };
 // 
 // static bool valid_range(uint16_t start, uint16_t count)
 // {
