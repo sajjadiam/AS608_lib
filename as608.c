@@ -11,21 +11,24 @@
  * initialization belong to the existing transaction layer.
  */
 
-as608_status_t as608_init(as608_t *ctx, const as608_config_t *config)
-{
-    if (ctx == NULL || !as608_transaction_config_valid(config)) {
+as608_status_t as608_init(as608_t *ctx, const as608_config_t *config) {
+    if (!ctx || !as608_transaction_config_valid(config)) {
         return AS608_STATUS_INVALID_ARG;
     }
 
     switch (ctx->state) {
-    case AS608_STATE_UNINITIALIZED:
-        break;
-    case AS608_STATE_BUSY:
-        return AS608_STATUS_BUSY;
-    case AS608_STATE_DESYNCHRONIZED:
-        return AS608_STATUS_RECOVERY_REQUIRED;
-    default:
-        return AS608_STATUS_INVALID_ARG;
+        case AS608_STATE_UNINITIALIZED: {
+            break;
+        }
+        case AS608_STATE_BUSY: {
+            return AS608_STATUS_BUSY;
+        }
+        case AS608_STATE_DESYNCHRONIZED: {
+            return AS608_STATUS_RECOVERY_REQUIRED;
+        }
+        default: {
+            return AS608_STATUS_INVALID_ARG;
+        }
     }
 
     /* Preserve configuration even if it aliases ctx->transaction.config. */
@@ -65,38 +68,32 @@ enum {
     STEP_INDEX_ACK
 };
 
-static as608_progress_t quarantine(as608_t *ctx,
-                                    as608_status_t status)
-{
+static as608_progress_t quarantine(as608_t *ctx, as608_status_t status) {
     ctx->result.status = status;
     ctx->result.confirmation = 0U;
     ctx->state = AS608_STATE_DESYNCHRONIZED;
     return AS608_FAILED;
 }
 
-static as608_progress_t finish(as608_t *ctx, uint8_t ack)
-{
+static as608_progress_t finish(as608_t *ctx, uint8_t ack) {
     ctx->result.status = AS608_STATUS_OK;
     ctx->result.confirmation = ack;
     ctx->state = AS608_STATE_DONE;
     return AS608_COMPLETE;
 }
 
-static as608_progress_t accept_simple_ack(as608_t *ctx)
-{
-    const as608_transaction_frame_t frame =
-        as608_transaction_received(&ctx->transaction);
+static as608_progress_t accept_simple_ack(as608_t *ctx) {
+    const as608_transaction_frame_t frame = as608_transaction_received(&ctx->transaction);
 
-    if (frame.kind != AS608_PACKET_ACK || frame.length != 1U) {
+    if ((frame.kind != AS608_PACKET_ACK) || (frame.length != 1U)) {
         return quarantine(ctx, AS608_STATUS_UNEXPECTED_REPLY);
     }
 
     return finish(ctx, frame.data[0]);
 }
 
-as608_progress_t as608_process(as608_t *ctx)
-{
-    if (ctx == NULL) {
+as608_progress_t as608_process(as608_t *ctx) {
+    if (!ctx) {
         return AS608_FAILED;
     }
 
@@ -112,25 +109,29 @@ as608_progress_t as608_process(as608_t *ctx)
         return quarantine(ctx, AS608_STATUS_UNEXPECTED_REPLY);
     }
 
-    const as608_transaction_result_t result =
-        as608_transaction_process(&ctx->transaction);
+    const as608_transaction_result_t result = as608_transaction_process(&ctx->transaction);
 
     switch (result.event) {
-    case AS608_TXN_PENDING:
-        return AS608_PENDING;
+        case AS608_TXN_PENDING: {
+            return AS608_PENDING;
+        }
 
-    case AS608_TXN_SENT:
-        as608_transaction_receive(&ctx->transaction, 1U);
-        return AS608_PENDING;
+        case AS608_TXN_SENT: {
+            as608_transaction_receive(&ctx->transaction, 1U);
+            return AS608_PENDING;
+        }
 
-    case AS608_TXN_RECEIVED:
-        return accept_simple_ack(ctx);
+        case AS608_TXN_RECEIVED: {
+            return accept_simple_ack(ctx);
+        }
 
-    case AS608_TXN_FAULT:
-        return quarantine(ctx, result.status);
+        case AS608_TXN_FAULT: {
+            return quarantine(ctx, result.status);
+        }
 
-    default:
-        return quarantine(ctx, AS608_STATUS_UNEXPECTED_REPLY);
+        default: {
+            return quarantine(ctx, AS608_STATUS_UNEXPECTED_REPLY);
+        }
     }
 }
 
