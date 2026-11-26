@@ -6,9 +6,9 @@ This checklist tracks the host library against the Synochip AS60x Communication 
 
 - Checked: implemented in the non-blocking core, within the stated scope.
 - Unchecked: missing, incomplete, or awaiting the indicated validation.
-- Command coverage: **30/31 (96.8%)**; 1 command remains. UpChar and DownChar are implemented with limited file-size support.
+- Command coverage: **31/31 opcode implementations** (30 general command implementations + one explicitly authorized experimental BurnCode profile). Target burn procedure is unverified. UpChar and DownChar are implemented with limited file-size support.
 - Implementation is not equivalent to hardware validation or universal firmware compatibility.
-- API design: all 31 documented opcodes have contracts in [as608.h](as608.h). The 1 missing command is declared only under `AS608_DECLARE_PLANNED_API`; it remains unchecked until implemented and tested.
+- API design: all 31 documented opcodes have contracts in [as608.h](as608.h). All wire opcodes now have host implementations; BurnCode remains experimental and requires target verification. Composite contracts remain under `AS608_DECLARE_PLANNED_API`.
 
 ## Active rebuild status (current source)
 
@@ -54,12 +54,12 @@ This checklist tracks the host library against the Synochip AS60x Communication 
 - [x] API 40: `as608_write_notepad_start()` — PS_WriteNotepad (0x18), full-page snapshot and validated ACK; dedicated host tests, hardware capacity and persistence unverified.
 - [x] API 41: `as608_read_notepad_start()` — PS_ReadNotepad (0x19), shared 32-byte ACK handling and atomic output; dedicated host tests, hardware capacity unverified.
 - [x] API 42: `as608_write_user_gpio_start()` — PS_UserGPIOCommand (0x1E), Chinese manual reserved command, strict 0/1 selector and echoed state; dedicated host tests, physical mapping and support unverified.
+- [x] API 43: `as608_burn_code_start()` — PS_BurnCode (0x1A), explicit experimental ACK-each profile, recovery gate and dedicated host tests; target validation pending.
 - [ ] Remaining planned APIs under `AS608_DECLARE_PLANNED_API`.
 
-Active wire-command coverage: **30/31** (PS_VfyPwd 0x13, PS_ReadSysPara 0x0F, PS_ValidTempleteNum 0x1D, PS_ReadIndexTable 0x1F, PS_ReadINFpage 0x16, PS_GetImage 0x01, PS_GenChar 0x02, PS_Match 0x03, PS_RegModel 0x05, PS_Search 0x04, PS_LoadChar 0x07, PS_UpChar 0x08, PS_DownChar 0x09, PS_StoreChar 0x06, PS_DeletChar 0x0C, PS_Empty 0x0D, PS_Enroll 0x10, PS_Identify 0x11, PS_HighSpeedSearch 0x1B, PS_UpImage 0x0A, PS_DownImage 0x0B, PS_GenBinImage 0x1C, PS_WriteReg 0x0E, PS_Port_Control 0x17, PS_SetPwd 0x12, PS_GetRandomCode 0x14, PS_SetChipAddr 0x15, PS_WriteNotepad 0x18, PS_ReadNotepad 0x19, PS_UserGPIOCommand 0x1E).
-All 23 baseline APIs are restored and APIs 24–42 are implemented. The independent, dedicated and full
-command/async regression suites are enabled in CI. The 1 remaining
-opcodes are planned, not implemented. Current firmware validation remains
+Active wire-command coverage: **31/31 including experimental BurnCode** (PS_VfyPwd 0x13, PS_ReadSysPara 0x0F, PS_ValidTempleteNum 0x1D, PS_ReadIndexTable 0x1F, PS_ReadINFpage 0x16, PS_GetImage 0x01, PS_GenChar 0x02, PS_Match 0x03, PS_RegModel 0x05, PS_Search 0x04, PS_LoadChar 0x07, PS_UpChar 0x08, PS_DownChar 0x09, PS_StoreChar 0x06, PS_DeletChar 0x0C, PS_Empty 0x0D, PS_Enroll 0x10, PS_Identify 0x11, PS_HighSpeedSearch 0x1B, PS_UpImage 0x0A, PS_DownImage 0x0B, PS_GenBinImage 0x1C, PS_WriteReg 0x0E, PS_Port_Control 0x17, PS_SetPwd 0x12, PS_GetRandomCode 0x14, PS_SetChipAddr 0x15, PS_WriteNotepad 0x18, PS_ReadNotepad 0x19, PS_UserGPIOCommand 0x1E, PS_BurnCode 0x1A).
+All 23 baseline APIs are restored and APIs 24–43 are implemented (BurnCode is experimental). The independent, dedicated and full
+command/async regression suites are enabled in CI. No wire opcode remains declaration-only; three host composite APIs remain planned. Current firmware validation remains
 outstanding; historical hardware results are not new validation.
 
 ## 1. Fingerprint acquisition and recognition
@@ -142,7 +142,7 @@ Handshake passwords and additive checksums are not encryption or authenticated t
 
 - [x] `0x18 PS_WriteNotepad` — Replace 32-byte user flash page; `as608_write_notepad_start()`. Hardware persistence unverified.
 - [x] `0x19 PS_ReadNotepad` — Read 32-byte user flash page; `as608_read_notepad_start()`. Output committed only on a valid success ACK.
-- [ ] `0x1A PS_BurnCode` — Firmware/information-page programming; high-risk, variant-specific. Planned: `as608_burn_code_start()`.
+- [x] `0x1A PS_BurnCode` — Experimental explicit ACK-each profile only; `as608_burn_code_start()`. No claim of verified target programming.
 - [x] `0x1E PS_UserGPIOCommand` — User GPIO output control per Chinese manual command 30; `as608_write_user_gpio_start()`. Reserved/variant-specific; hardware support unverified.
 - [x] Notepad read/write APIs validate pages 0–15 and 32-byte payloads.
 - [ ] Verify actual notepad capacity, readback and persistence on hardware.

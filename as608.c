@@ -34,6 +34,7 @@ enum as608_command {
     CMD_PORT_CONTROL = 0x17,
     CMD_WRITE_NOTEPAD = 0x18,
     CMD_READ_NOTEPAD = 0x19,
+    CMD_BURN_CODE = 0x1A,
     CMD_HIGH_SPEED_SEARCH = 0x1B,
     CMD_GEN_BIN_IMAGE = 0x1C,
     CMD_COUNT = 0x1D,
@@ -72,7 +73,10 @@ enum as608_step {
     STEP_DEVICE_INFO_DATA,
     STEP_U32_ACK,
     STEP_ADDRESS_ACK,
-    STEP_GPIO_ACK
+    STEP_GPIO_ACK,
+    STEP_BURN_READY_ACK,
+    STEP_BURN_SOURCE,
+    STEP_BURN_DATA_ACK
 };
 
 /* =========================================================================
@@ -114,6 +118,7 @@ as608_status_t as608_init(as608_t *ctx, const as608_config_t *config) {
         case AS608_STATE_BUSY: {
             return AS608_STATUS_BUSY;
         }
+        case AS608_STATE_DONE_RECOVERY_REQUIRED:
         case AS608_STATE_DESYNCHRONIZED: {
             return AS608_STATUS_RECOVERY_REQUIRED;
         }
@@ -144,7 +149,8 @@ bool as608_get_result(const as608_t *ctx, as608_result_t *result) {
         return false;
     }
 
-    if ((ctx->state != AS608_STATE_DONE) && (ctx->state != AS608_STATE_DESYNCHRONIZED)) {
+    if ((ctx->state != AS608_STATE_DONE) && (ctx->state != AS608_STATE_DONE_RECOVERY_REQUIRED) &&
+        (ctx->state != AS608_STATE_DESYNCHRONIZED)) {
         return false;
     }
 
@@ -165,7 +171,7 @@ as608_status_t as608_abort(as608_t *ctx) {
         return AS608_STATUS_INVALID_ARG;
     }
 
-    if (ctx->state == AS608_STATE_DESYNCHRONIZED) {
+    if ((ctx->state == AS608_STATE_DESYNCHRONIZED) || (ctx->state == AS608_STATE_DONE_RECOVERY_REQUIRED)) {
         return AS608_STATUS_RECOVERY_REQUIRED;
     }
 
@@ -197,6 +203,7 @@ as608_status_t as608_confirm_reset(as608_t *ctx) {
         case AS608_STATE_BUSY: {
             return AS608_STATUS_BUSY;
         }
+        case AS608_STATE_DONE_RECOVERY_REQUIRED:
         case AS608_STATE_DESYNCHRONIZED: {
             break;
         }
@@ -244,6 +251,7 @@ static as608_status_t start_allowed(const as608_t *ctx) {
         case AS608_STATE_BUSY: {
             return AS608_STATUS_BUSY;
         }
+        case AS608_STATE_DONE_RECOVERY_REQUIRED:
         case AS608_STATE_DESYNCHRONIZED: {
             return AS608_STATUS_RECOVERY_REQUIRED;
         }
@@ -1269,7 +1277,7 @@ as608_status_t as608_upload_image_start(as608_t *ctx, const as608_stream_sink_t 
  * Completion means readiness ACK and physical TX drain, not final acceptance.
  */
 
-/* Poll a non-blocking source under the original job deadline. */
+/* Poll a download or burn source under the original job deadline. */
 static as608_progress_t poll_download_source(as608_t *ctx) {
     const as608_transaction_t *txn = &ctx->transaction;
     const uint32_t elapsed = txn->config.port.clock_ms(txn->config.port.user) - txn->started_ms;
@@ -1304,7 +1312,7 @@ static as608_progress_t poll_download_source(as608_t *ctx) {
 
     if (status == AS608_STATUS_OK) {
         ctx->input_offset += length;
-        ctx->step = STEP_DOWN_DATA;
+        ctx->step = (ctx->step == STEP_BURN_SOURCE) ? STEP_BURN_DATA_ACK : STEP_DOWN_DATA;
     }
 
     return next_or_fault(ctx, status);
@@ -1656,6 +1664,88 @@ as608_status_t as608_write_user_gpio_start(as608_t *ctx, as608_gpio_request_t *r
  * ========================================================================= */
 
 /* =========================================================================
+ * API 43: as608_burn_code_start
+ * =========================================================================
+ * PS_BurnCode (0x1A), AS60x MCU User's Guide V1.0, pp. 29–30.
+ * Explicit opt-in experimental ACK-each profile; verify on target first.
+ */
+
+/* Accept a terminal burn ACK but require a fresh physical link before reuse. */
+static as608_progress_t finish_burn(as608_t *ctx, uint8_t ack) {
+    const as608_progress_t progress = finish(ctx, ack);
+
+    ctx->state = AS608_STATE_DONE_RECOVERY_REQUIRED;
+    return progress;
+}
+
+/* Gate each fragment on readiness or its predecessor's ACK. */
+static as608_progress_t accept_burn_ack(as608_t *ctx) {
+    const as608_transaction_frame_t frame = as608_transaction_received(&ctx->transaction);
+
+    if ((frame.kind != AS608_PACKET_ACK) || (frame.length != 1U)) {
+        return quarantine(ctx, AS608_STATUS_UNEXPECTED_REPLY);
+    }
+
+    const uint8_t ack = frame.data[0];
+    const bool ready = (ctx->step == STEP_BURN_READY_ACK);
+    const bool end = (!ready && (ctx->input_offset == ctx->input_length));
+    const uint8_t expected = (ready || end) ? AS608_ACK_OK : AS608_ACK_DATA_ACCEPTED;
+
+    if (ack != expected) {
+        if ((ack == AS608_ACK_OK) || (ack == AS608_ACK_DATA_ACCEPTED) ||
+            (ack == AS608_ACK_COMMAND_ACCEPTED)) {
+            return quarantine(ctx, AS608_STATUS_UNEXPECTED_REPLY);
+        }
+
+        return finish_burn(ctx, ack);
+    }
+
+    if (end) {
+        return finish_burn(ctx, ack);
+    }
+
+    ctx->step = STEP_BURN_SOURCE;
+    return AS608_PENDING;
+}
+
+as608_status_t as608_burn_code_start(as608_t *ctx, const as608_firmware_request_t *request) {
+    if (!request || !request->authorized ||
+        (request->profile != AS608_BURN_PROFILE_ACK_EACH) ||
+        ((request->mode != AS608_BURN_INFORMATION_PAGE) && (request->mode != AS608_BURN_FULL_FIRMWARE)) ||
+        ((request->packet_size != AS608_PACKET_SIZE_64) && (request->packet_size != AS608_PACKET_SIZE_128) &&
+         (request->packet_size != AS608_PACKET_SIZE_256)) ||
+        !request->source.read || (request->source.length == 0U)) {
+        return AS608_STATUS_INVALID_ARG;
+    }
+
+    const as608_firmware_request_t saved = *request;
+    const uint16_t chunk = (uint16_t)(32U << (uint8_t)saved.packet_size);
+
+    if ((saved.source.length % chunk) != 0U) {
+        return AS608_STATUS_INVALID_ARG;
+    }
+
+    const command_t command = {{CMD_BURN_CODE, (uint8_t)saved.mode}, 2U, STEP_BURN_READY_ACK};
+    const as608_status_t status = launch(ctx, &command);
+
+    if (status == AS608_STATUS_OK) {
+        ctx->input = NULL;
+        ctx->input_length = saved.source.length;
+        ctx->input_offset = 0U;
+        ctx->chunk_size = chunk;
+        ctx->store_after_download = false;
+        ctx->stream_read = saved.source.read;
+        ctx->stream_user = saved.source.user;
+    }
+
+    return status;
+}
+
+/* =========================================================================
+ * END API 43
+ * ========================================================================= */
+
+/* =========================================================================
  * API 02: as608_process
  * =========================================================================
  * Keep the process dispatcher after the active command API sections so
@@ -1678,7 +1768,7 @@ as608_progress_t as608_process(as608_t *ctx) {
         return AS608_FAILED;
     }
 
-    if (ctx->state == AS608_STATE_DONE) {
+    if ((ctx->state == AS608_STATE_DONE) || (ctx->state == AS608_STATE_DONE_RECOVERY_REQUIRED)) {
         return AS608_COMPLETE;
     }
 
@@ -1686,7 +1776,7 @@ as608_progress_t as608_process(as608_t *ctx) {
         return AS608_FAILED;
     }
 
-    if (ctx->step == STEP_DOWN_SOURCE) {
+    if ((ctx->step == STEP_DOWN_SOURCE) || (ctx->step == STEP_BURN_SOURCE)) {
         return poll_download_source(ctx);
     }
 
@@ -1701,6 +1791,8 @@ as608_progress_t as608_process(as608_t *ctx) {
         case STEP_IMAGE_ACK:
         case STEP_DEVICE_INFO_ACK:
         case STEP_ADDRESS_ACK:
+        case STEP_BURN_READY_ACK:
+        case STEP_BURN_DATA_ACK:
         case STEP_INFO_ACK: {
             limit = 1U;
             break;
@@ -1782,6 +1874,10 @@ as608_progress_t as608_process(as608_t *ctx) {
                 }
                 case STEP_DOWN_ACK: {
                     return accept_download_ack(ctx);
+                }
+                case STEP_BURN_READY_ACK:
+                case STEP_BURN_DATA_ACK: {
+                    return accept_burn_ack(ctx);
                 }
                 case STEP_GPIO_ACK: {
                     return accept_gpio_ack(ctx);

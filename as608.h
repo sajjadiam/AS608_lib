@@ -225,6 +225,27 @@ typedef struct {
     size_t length; /**< Exact nonzero number of wire bytes to send. */
 } as608_stream_source_t;
 
+/** PS_BurnCode (0x1A) upgrade mode; variant-specific, destructive. */
+typedef enum {
+    AS608_BURN_INFORMATION_PAGE = 0,
+    AS608_BURN_FULL_FIRMWARE = 1
+} as608_burn_mode_t;
+
+/** Experimental burn handshake profile; zero never permits transmission. */
+typedef enum {
+    AS608_BURN_PROFILE_DISABLED = 0,
+    AS608_BURN_PROFILE_ACK_EACH = 1 /**< Ready 00, intermediate F0, final 00. */
+} as608_burn_profile_t;
+
+/** Caller-authorized vendor-format firmware transfer, not raw flash access. */
+typedef struct {
+    as608_burn_mode_t mode;
+    as608_stream_source_t source;
+    as608_packet_size_t packet_size;
+    as608_burn_profile_t profile;
+    bool authorized; /**< Explicit authorization after target validation. */
+} as608_firmware_request_t;
+
 /**
  * @brief Search input and output in a single caller-owned object.
  * @details Set buffer, start_page and page_count before calling the function.
@@ -243,7 +264,8 @@ typedef enum {
     AS608_STATE_IDLE,
     AS608_STATE_BUSY,
     AS608_STATE_DONE,
-    AS608_STATE_DESYNCHRONIZED
+    AS608_STATE_DESYNCHRONIZED,
+    AS608_STATE_DONE_RECOVERY_REQUIRED /**< Terminal ACK available; physical recovery required. */
 } as608_state_t;
 
 typedef enum {
@@ -296,7 +318,8 @@ typedef struct {
  *
  * @retval AS608_STATUS_OK Context initialized and ready for a future job.
  * @retval AS608_STATUS_INVALID_ARG Null argument, invalid configuration,
- * or a context state other than UNINITIALIZED, BUSY or DESYNCHRONIZED.
+ * or a context state other than UNINITIALIZED, BUSY, DESYNCHRONIZED
+ * or DONE_RECOVERY_REQUIRED.
  * @retval AS608_STATUS_BUSY Valid configuration, but a job owns the context.
  * @retval AS608_STATUS_RECOVERY_REQUIRED Valid configuration, but the link
  * is quarantined; initialization must not bypass recovery.
@@ -326,19 +349,20 @@ as608_status_t as608_init(as608_t *ctx, const as608_config_t *config);
  *
  * @retval AS608_PENDING The job remains BUSY; call again from the scheduler.
  * @retval AS608_COMPLETE A validated terminal result exists (including a
- * negative sensor ACK). Repeated calls in DONE return COMPLETE without I/O.
+ * negative sensor ACK). Repeated calls in DONE or DONE_RECOVERY_REQUIRED return COMPLETE without I/O.
  * @retval AS608_FAILED Invalid/idle/uninitialized/quarantined context,
  * or a host-side communication/protocol failure.
  *
  * @pre Calls sharing the context must be serialized. For useful progress,
  * a start API must have admitted a job, and its buffers must remain valid.
- * @post A valid terminal ACK sets DONE and stores its raw confirmation
+ * @post A valid terminal ACK sets DONE (or DONE_RECOVERY_REQUIRED for burn)
+ * and stores its raw confirmation
  * code. A transport/protocol fault during BUSY sets DESYNCHRONIZED and
  * records the host error; a non-BUSY context is left unchanged.
- * @note At rebuild stage 42, simple, GPIO, system-parameter, 16/32-bit result,
+ * @note At rebuild stage 43, simple, GPIO, system-parameter, 16/32-bit result,
  * 32-byte index/notepad and search ACK phases plus information-page, template,
  * feature and image upload streaming are active. Template, feature and
- * image download streaming is also supported.
+ * image download streaming and the experimental burn ACK-each profile are supported.
  * @see as608_get_result
  * @see as608_confirm_reset
  */
@@ -347,7 +371,7 @@ as608_progress_t as608_process(as608_t *ctx);
 /**
  * @brief Copy the result of the most recent terminal job.
  *
- * @details Reads the stored result only in DONE or DESYNCHRONIZED.
+ * @details Reads the stored result only in DONE, DONE_RECOVERY_REQUIRED or DESYNCHRONIZED.
  * Does not advance the job, clear its result, change state, access UART,
  * or read the clock. Repeated calls return the same result until a later
  * operation changes the context.
@@ -379,7 +403,7 @@ bool as608_get_result(const as608_t *ctx, as608_result_t *result);
  * @retval AS608_STATUS_OK The BUSY job was logically aborted.
  * @retval AS608_STATUS_RECOVERY_REQUIRED The context is already quarantined.
  * @retval AS608_STATUS_INVALID_ARG NULL context or a state other than
- * BUSY or DESYNCHRONIZED.
+ * BUSY, DESYNCHRONIZED or DONE_RECOVERY_REQUIRED.
  * @pre Calls sharing the context must be serialized.
  * @post On success, the state is DESYNCHRONIZED and the stored result
  * status is AS608_STATUS_RECOVERY_REQUIRED; confirmation is invalid.
@@ -407,10 +431,10 @@ as608_status_t as608_abort(as608_t *ctx);
  * @retval AS608_STATUS_NOT_INITIALIZED Context is UNINITIALIZED.
  * @retval AS608_STATUS_BUSY A job is still active.
  * @retval AS608_STATUS_INVALID_ARG Null pointer or any other state
- * except DESYNCHRONIZED.
+ * except DESYNCHRONIZED or DONE_RECOVERY_REQUIRED.
  *
  * @pre Calls sharing the context must be serialized. Before calling on a
- * DESYNCHRONIZED context, the application must stop/cancel old TX,
+ * DESYNCHRONIZED or DONE_RECOVERY_REQUIRED context, the application must stop/cancel old TX,
  * physically reset or power-cycle the sensor, wait for boot, and purge
  * all stale RX/TX bytes and UART errors. The port and sensor must have a
  * fresh communication epoch and compatible retained configuration.
@@ -1691,6 +1715,47 @@ as608_status_t as608_read_notepad_start(as608_t *ctx, as608_notepad_page_t *page
  */
 as608_status_t as608_write_user_gpio_start(as608_t *ctx, as608_gpio_request_t *request);
 
+/**
+ * @brief Start a destructive, explicitly authorized PS_BurnCode (0x1A) job.
+ *
+ * @details Experimental profile only. The manual documents the mode,
+ * readiness ACK 00 and 64/128/256-byte fragments, but does not establish
+ * the exact intermediate/final ACK sequence or vendor image format.
+ * ACK_EACH is a caller-verified profile: 00 readiness, F0 after each
+ * DATA packet, 00 after END_DATA. No protocol discovery or fallback.
+ * The caller selects a verified packet-size code; no ReadSysPara job.
+ *
+ * @param[in,out] ctx Initialized caller-owned device context.
+ * @param[in] request Verified mode, exact vendor-format source, size code,
+ * explicit profile and authorization. Descriptor fields are copied.
+ * @retval AS608_STATUS_OK Job admitted; no flash success implied.
+ * @retval AS608_STATUS_INVALID_ARG Missing authorization/profile, invalid
+ * mode, size, source or length, or null context/request.
+ * @retval AS608_STATUS_NOT_INITIALIZED Context is not initialized.
+ * @retval AS608_STATUS_BUSY Another job owns the context.
+ * @retval AS608_STATUS_RECOVERY_REQUIRED Link requires physical recovery.
+ * @pre Verify the entire vendor update procedure, image integrity and
+ * compatibility, length, ACK sequence, timing, supply and recovery path
+ * for the exact target before authorizing. Serialize calls; source must
+ * remain valid, non-blocking and supply complete fragments. A zero return
+ * waits without extending the original deadline. No padding is generated.
+ * @post Each next fragment waits for its predecessor's required ACK.
+ * A terminal sensor ACK is retained with status OK and the context enters
+ * DONE_RECOVERY_REQUIRED. Unexpected phase ACK, transport or source fault,
+ * timeout or abort quarantines the link. No automatic retry.
+ * @warning Acknowledgment is not independent verification of flash
+ * contents, bootability or persistence. After any admitted burn, perform
+ * vendor-specified recovery/reboot, re-establish UART/address, purge stale
+ * bytes and call as608_confirm_reset() only for compatible retained
+ * configuration (otherwise initialize a fresh context). Never use this
+ * experimental profile on unverified firmware or arbitrary image data.
+ * @see as608_process
+ * @see as608_get_result
+ * @see as608_confirm_reset
+ * @see AS60x MCU User's Guide V1.0, printed pages 29–30.
+ */
+as608_status_t as608_burn_code_start(as608_t *ctx, const as608_firmware_request_t *request);
+
 /* -------------------------------------------------------------------------
  * Planned API contracts (declarations only; NOT implemented or linkable).
  *
@@ -1712,20 +1777,6 @@ typedef enum {
     AS608_SENSOR_IMAGE_VALID = 0x08
 } as608_sensor_status_flag_t;
 
-/** PS_BurnCode (0x1A) upgrade mode; variant-specific, destructive. */
-typedef enum {
-    AS608_BURN_INFORMATION_PAGE = 0,
-    AS608_BURN_FULL_FIRMWARE = 1
-} as608_burn_mode_t;
-
-/** Firmware request. Caller must verify device, image and recovery path.
- * The stream describes the vendor-format image, not arbitrary flash data.
- */
-typedef struct {
-    as608_burn_mode_t mode;
-    as608_stream_source_t source;
-} as608_firmware_request_t;
-
 /** Host-managed two-capture enrollment request.
  * Poll only while waiting for finger placement/removal; no implicit retry
  * of uncertain write operations. Whole workflow uses the job deadline.
@@ -1742,16 +1793,6 @@ typedef struct {
     bool found;
     uint16_t page_id;
 } as608_free_slot_t;
-
-/* ---- Firmware maintenance ---- */
-
-/** PS_BurnCode (0x1A): high-risk and firmware-specific.
- * Requires separate target validation and explicit application authorization.
- * No automatic retry of programming after failure. Do not use a generic
- * image or assume the module's bootloader/recovery behavior.
- */
-as608_status_t as608_burn_code_start(as608_t *ctx,
-                                     const as608_firmware_request_t *request);
 
 /* ---- Host-managed composite operations (no extra wire opcodes) ---- */
 
