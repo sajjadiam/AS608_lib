@@ -18,6 +18,7 @@ enum as608_command {
     CMD_LOAD_CHAR = 0x07,
     CMD_UP_CHAR = 0x08,
     CMD_DOWN_CHAR = 0x09,
+    CMD_DELETE_CHAR = 0x0C,
     CMD_READ_PARAMS = 0x0F,
     CMD_VERIFY_PASSWORD = 0x13,
     CMD_READ_INFO = 0x16,
@@ -964,6 +965,29 @@ as608_status_t as608_write_template_start(as608_t *ctx, uint16_t page_id, const 
  * ========================================================================= */
 
 /* =========================================================================
+ * API 22: as608_delete_templates_start
+ * =========================================================================
+ * PS_DeletChar (0x0C), AS60x Communication Manual V1.0, p. 18.
+ * Deletes a contiguous range of templates from the flash database.
+ */
+
+as608_status_t as608_delete_templates_start(as608_t *ctx, uint16_t start_page, uint16_t page_count) {
+    if (!valid_range(start_page, page_count)) {
+        return AS608_STATUS_INVALID_ARG;
+    }
+
+    command_t command = {{CMD_DELETE_CHAR}, 5U, STEP_SIMPLE_ACK};
+    store_u16(command.bytes + 1U, start_page);
+    store_u16(command.bytes + 3U, page_count);
+
+    return launch(ctx, &command);
+}
+
+/* =========================================================================
+ * END API 22
+ * ========================================================================= */
+
+/* =========================================================================
  * API 02: as608_process
  * =========================================================================
  * Keep the process dispatcher after the active command API sections so
@@ -1125,17 +1149,7 @@ as608_progress_t as608_process(as608_t *ctx) {
  * ========================================================================= */
 
 // Remaining command opcodes; migrate into enum as608_command when needed.
-//     CMD_DELETE_CHAR = 0x0C, CMD_EMPTY = 0x0D,
-// 
-// as608_status_t as608_delete_templates_start(as608_t *ctx, uint16_t start_page,
-//                                           uint16_t page_count)
-// {
-//     if (!valid_range(start_page, page_count)) return AS608_STATUS_INVALID_ARG;
-//     command_t command = {{CMD_DELETE_CHAR}, 5U, STEP_SIMPLE_ACK};
-//     store_u16(command.bytes + 1U, start_page);
-//     store_u16(command.bytes + 3U, page_count);
-//     return launch(ctx, &command);
-// }
+//     CMD_EMPTY = 0x0D,
 // 
 // as608_status_t as608_empty_database_start(as608_t *ctx)
 // {

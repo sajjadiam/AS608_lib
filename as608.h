@@ -234,7 +234,7 @@ as608_status_t as608_init(as608_t *ctx, const as608_config_t *config);
  * @post A valid terminal ACK sets DONE and stores its raw confirmation
  * code. A transport/protocol fault during BUSY sets DESYNCHRONIZED and
  * records the host error; a non-BUSY context is left unchanged.
- * @note At rebuild stage 21, simple, system-parameter, 16-bit result,
+ * @note At rebuild stage 22, simple, system-parameter, 16-bit result,
  * index-table and search ACK phases plus information-page and template
  * upload/download streaming are active.
  * @see as608_get_result
@@ -889,12 +889,45 @@ as608_status_t as608_read_template_start(as608_t *ctx, uint16_t page_id, as608_t
  */
 as608_status_t as608_write_template_start(as608_t *ctx, uint16_t page_id, const uint8_t *data, size_t length);
 
-/* Incremental rebuild: APIs 01–21 are defined.
+/**
+ * @brief Start deleting a contiguous range of flash templates (PS_DeletChar, 0x0C).
+ *
+ * @details Encodes the starting PageID and number of slots as two
+ * 16-bit big-endian fields. Expects a one-byte confirmation ACK.
+ *
+ * @param[in,out] ctx Initialized caller-owned device context.
+ * @param[in] start_page First database slot to delete.
+ * @param[in] page_count Number of consecutive slots, not the last PageID.
+ * @retval AS608_STATUS_OK Job admitted; deletion not yet confirmed.
+ * @retval AS608_STATUS_INVALID_ARG Null context, zero count, or range
+ * exceeding the 16-bit PageID space.
+ * @retval AS608_STATUS_NOT_INITIALIZED Context is not initialized.
+ * @retval AS608_STATUS_BUSY Another job owns the context.
+ * @retval AS608_STATUS_RECOVERY_REQUIRED Link is quarantined.
+ * @pre Serialize calls sharing ctx. Authorize deletion and ensure the
+ * requested range fits actual database capacity. The driver checks the
+ * representable PageID range only, not physical capacity or occupancy.
+ * @post On admission, state is BUSY and the job deadline starts.
+ * Rejected admission leaves the context and previous result unchanged.
+ * @warning This is a destructive flash operation. Timeout, abort, or
+ * a failed reply can leave database contents uncertain. No automatic
+ * retry, rollback, occupancy check, or verification is performed.
+ * @note Check both terminal result fields. ACK_OK (0x00) reports
+ * successful deletion, 0x01 a packet error, and 0x10 deletion failure.
+ * A negative ACK is a terminal sensor result, not a host transport fault,
+ * and does not guarantee the database is unchanged.
+ * @see as608_read_parameters_start
+ * @see as608_read_index_table_start
+ * @see as608_process
+ * @see as608_get_result
+ * @see AS60x Communication Manual V1.0, printed page 18.
+ */
+as608_status_t as608_delete_templates_start(as608_t *ctx, uint16_t start_page, uint16_t page_count);
+
+/* Incremental rebuild: APIs 01–22 are defined.
  * The following API declarations remain contracts until restored.
  * See FEATURES.md.
  */
-as608_status_t as608_delete_templates_start(as608_t *ctx, uint16_t start_page,
-                                          uint16_t page_count);
 as608_status_t as608_empty_database_start(as608_t *ctx);
 
 /* -------------------------------------------------------------------------

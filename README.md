@@ -6,9 +6,9 @@ physical sensor. Historical hardware validation: two AS608_QCCF modules on
 STM32F103C8T6, USART1/USART2, 57,600 baud, 8N2; successful 768-byte template
 transfer. The unified non-blocking port still needs hardware validation.
 
-## Incremental API rebuild — active stage 21
+## Incremental API rebuild — active stage 22
 
-The five lifecycle APIs and fourteen command APIs (0x13, 0x0F, 0x1D, 0x1F, 0x16, 0x01, 0x02, 0x03, 0x05, 0x04, 0x07, 0x08, 0x09, 0x06)
+The five lifecycle APIs and fifteen command APIs (0x13, 0x0F, 0x1D, 0x1F, 0x16, 0x01, 0x02, 0x03, 0x05, 0x04, 0x07, 0x08, 0x09, 0x06, 0x0C)
 are currently compiled from as608.c. Process supports simple,
 system-parameter, 16-bit result, search and index-table ACK phases, plus the
 512-byte information-page and 512/768-byte template upload/download streams.
@@ -27,7 +27,7 @@ This is intentionally an incomplete, non-deployable command layer:
 the other declarations in as608.h cannot currently be linked. The
 command/async regression sources are retained but not built until their
 required APIs are restored. CI still builds the independent packet and
-transaction tests and the API 01–21 tests. Previous command examples and
+transaction tests and the API 01–22 tests. Previous command examples and
 coverage below describe the historical baseline, not this active stage.
 
 ## Flat project structure
@@ -61,6 +61,7 @@ AS608_lib/
 ├── test_as608_store_template.c   Active API 19 flash store tests
 ├── test_as608_read_template.c    Active API 20 composite read tests
 ├── test_as608_write_template.c   Active API 21 composite write tests
+├── test_as608_delete_templates.c Active API 22 range deletion tests
 ├── test_as608_transaction.c      Independent transport tests
 ├── test_as608_packet.c           Packet tests
 ├── test_as608_commands.c         Full command and template regression tests
@@ -251,6 +252,8 @@ cc -std=c11 -Wall -Wextra -Werror -pedantic -I. as608_packet.c as608_transaction
 ./build/test_read_template
 cc -std=c11 -Wall -Wextra -Werror -pedantic -I. as608_packet.c as608_transaction.c as608.c test_as608_write_template.c -o build/test_write_template
 ./build/test_write_template
+cc -std=c11 -Wall -Wextra -Werror -pedantic -I. as608_packet.c as608_transaction.c as608.c test_as608_delete_templates.c -o build/test_delete_templates
+./build/test_delete_templates
 # Full command/async regression tests are temporarily inactive.
 ```
 
