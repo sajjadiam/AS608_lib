@@ -234,7 +234,7 @@ as608_status_t as608_init(as608_t *ctx, const as608_config_t *config);
  * @post A valid terminal ACK sets DONE and stores its raw confirmation
  * code. A transport/protocol fault during BUSY sets DESYNCHRONIZED and
  * records the host error; a non-BUSY context is left unchanged.
- * @note At rebuild stage 22, simple, system-parameter, 16-bit result,
+ * @note At rebuild stage 23, simple, system-parameter, 16-bit result,
  * index-table and search ACK phases plus information-page and template
  * upload/download streaming are active.
  * @see as608_get_result
@@ -924,9 +924,34 @@ as608_status_t as608_write_template_start(as608_t *ctx, uint16_t page_id, const 
  */
 as608_status_t as608_delete_templates_start(as608_t *ctx, uint16_t start_page, uint16_t page_count);
 
-/* Incremental rebuild: APIs 01–22 are defined.
- * The following API declarations remain contracts until restored.
- * See FEATURES.md.
+/**
+ * @brief Start deleting all flash templates (PS_Empty, opcode 0x0D).
+ *
+ * @details Sends the argument-free database-clear command and expects
+ * a one-byte confirmation ACK. This is not a factory reset, secure erase,
+ * or a command to change system configuration.
+ *
+ * @param[in,out] ctx Initialized caller-owned device context.
+ * @retval AS608_STATUS_OK Job admitted; deletion not yet confirmed.
+ * @retval AS608_STATUS_INVALID_ARG Null context.
+ * @retval AS608_STATUS_NOT_INITIALIZED Context is not initialized.
+ * @retval AS608_STATUS_BUSY Another job owns the context.
+ * @retval AS608_STATUS_RECOVERY_REQUIRED Link is quarantined.
+ * @pre Serialize calls sharing ctx. The application must explicitly
+ * authorize removal of all templates on the selected sensor.
+ * @post On admission, state is BUSY and the original job deadline starts.
+ * Rejected admission leaves the context and previous result unchanged.
+ * @warning Destructive flash operation. Timeout, abort, negative ACK
+ * or transport error may leave database contents uncertain.
+ * No automatic retry, rollback or post-erase verification is performed.
+ * @note Check both terminal result fields. ACK_OK (0x00) reports
+ * successful clearing, 0x01 a packet error, and 0x11 clearing failure.
+ * A negative ACK is a terminal sensor result, not a host transport fault.
+ * @see as608_delete_templates_start
+ * @see as608_get_template_count_start
+ * @see as608_process
+ * @see as608_get_result
+ * @see AS60x Communication Manual V1.0, printed pages 18–19.
  */
 as608_status_t as608_empty_database_start(as608_t *ctx);
 

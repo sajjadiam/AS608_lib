@@ -34,14 +34,14 @@ This checklist tracks the host library against the Synochip AS60x Communication 
 - [x] API 20: `as608_read_template_start()` — composite LoadChar + UpChar, one deadline and dedicated tests.
 - [x] API 21: `as608_write_template_start()` — composite ReadSysPara + DownChar + StoreChar, shared deadline and drain gating; requires verified no-final-ACK firmware.
 - [x] API 22: `as608_delete_templates_start()` — PS_DeletChar (0x0C), validated nonempty range and dedicated tests.
-- [ ] API 23: `as608_empty_database_start()`.
-- [ ] Remaining command APIs, restored individually in header order.
+- [x] API 23: `as608_empty_database_start()` — PS_Empty (0x0D), complete database deletion and dedicated tests.
+- [ ] Remaining planned APIs under `AS608_DECLARE_PLANNED_API`.
 
-Active wire-command coverage: **15/31** (PS_VfyPwd 0x13, PS_ReadSysPara 0x0F, PS_ValidTempleteNum 0x1D, PS_ReadIndexTable 0x1F, PS_ReadINFpage 0x16, PS_GetImage 0x01, PS_GenChar 0x02, PS_Match 0x03, PS_RegModel 0x05, PS_Search 0x04, PS_LoadChar 0x07, PS_UpChar 0x08, PS_DownChar 0x09, PS_StoreChar 0x06, PS_DeletChar 0x0C).
-The 16/31 command coverage and checked items below describe the preserved
-pre-rebuild baseline (commit 53425e4), not current linkability except for
-APIs explicitly restored above.
-No historical test result is asserted for the new active stage.
+Active wire-command coverage: **16/31** (PS_VfyPwd 0x13, PS_ReadSysPara 0x0F, PS_ValidTempleteNum 0x1D, PS_ReadIndexTable 0x1F, PS_ReadINFpage 0x16, PS_GetImage 0x01, PS_GenChar 0x02, PS_Match 0x03, PS_RegModel 0x05, PS_Search 0x04, PS_LoadChar 0x07, PS_UpChar 0x08, PS_DownChar 0x09, PS_StoreChar 0x06, PS_DeletChar 0x0C, PS_Empty 0x0D).
+All 23 baseline APIs are restored. The independent, dedicated and full
+command/async regression suites are enabled in CI. The 15 remaining
+opcodes are planned, not implemented. Current firmware validation remains
+outstanding; historical hardware results are not new validation.
 
 ## 1. Fingerprint acquisition and recognition
 

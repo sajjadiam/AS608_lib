@@ -19,6 +19,7 @@ enum as608_command {
     CMD_UP_CHAR = 0x08,
     CMD_DOWN_CHAR = 0x09,
     CMD_DELETE_CHAR = 0x0C,
+    CMD_EMPTY = 0x0D,
     CMD_READ_PARAMS = 0x0F,
     CMD_VERIFY_PASSWORD = 0x13,
     CMD_READ_INFO = 0x16,
@@ -988,6 +989,21 @@ as608_status_t as608_delete_templates_start(as608_t *ctx, uint16_t start_page, u
  * ========================================================================= */
 
 /* =========================================================================
+ * API 23: as608_empty_database_start
+ * =========================================================================
+ * PS_Empty (0x0D), AS60x Communication Manual V1.0, pp. 18–19.
+ * Deletes all fingerprint templates from the flash database.
+ */
+
+as608_status_t as608_empty_database_start(as608_t *ctx) {
+    return simple_start(ctx, CMD_EMPTY);
+}
+
+/* =========================================================================
+ * END API 23
+ * ========================================================================= */
+
+/* =========================================================================
  * API 02: as608_process
  * =========================================================================
  * Keep the process dispatcher after the active command API sections so
@@ -1137,101 +1153,3 @@ as608_progress_t as608_process(as608_t *ctx) {
 /* =========================================================================
  * END API 02
  * ========================================================================= */
-
-/* =========================================================================
- * INACTIVE REFERENCE — incremental API rebuild
- *
- * Previous implementation from commit 53425e4.
- * Move/review one API and its required helpers at a time into active sections
- * above; remove migrated definitions from this reference. Shared helpers
- * are defined once, above their first active user. Insert new API sections
- * before API 02 (process dispatcher). Never compile this block.
- * ========================================================================= */
-
-// Remaining command opcodes; migrate into enum as608_command when needed.
-//     CMD_EMPTY = 0x0D,
-// 
-// as608_status_t as608_empty_database_start(as608_t *ctx)
-// {
-//     return simple_start(ctx, CMD_EMPTY);
-// }
-// 
-// static bool is_stream(const as608_t *ctx)
-// {
-//     return ctx->step == STEP_UP_DATA || ctx->step == STEP_INFO_DATA;
-// }
-// 
-// static size_t expected_ack(const as608_t *ctx)
-// {
-//     switch (ctx->step) {
-//     case STEP_PARAMS_ACK:
-//     case STEP_READ_PARAMS_ACK: return 17U;
-//     case STEP_U16_ACK: return 3U;
-//     case STEP_SEARCH_ACK: return 5U;
-//     case STEP_INDEX_ACK: return 33U;
-//     default: return 1U;
-//     }
-// }
-// 
-// static bool ack_valid(const as608_t *ctx,
-//                       const as608_transaction_frame_t *frame)
-// {
-//     if (frame->kind != AS608_PACKET_ACK || frame->length == 0U) return false;
-//     return frame->length == expected_ack(ctx) ||
-//            (frame->data[0] != AS608_ACK_OK && frame->length == 1U);
-// }
-// 
-// static as608_progress_t accept_reply(as608_t *ctx, const as608_transaction_frame_t *frame)
-// {
-//     switch (ctx->step) {
-//     case STEP_READ_PARAMS_ACK:
-//         decode_parameters(frame->data, ctx->reply_output);
-//         break;
-//     case STEP_U16_ACK:
-//         *(uint16_t *)ctx->reply_output = load_u16(frame->data + 1U);
-//         break;
-//     case STEP_SEARCH_ACK: {
-//         as608_search_t *search = ctx->reply_output;
-//         search->match.page_id = load_u16(frame->data + 1U);
-//         search->match.score = load_u16(frame->data + 3U);
-//         break;
-//     }
-//     case STEP_INDEX_ACK:
-//         (void)memcpy(ctx->reply_output, frame->data + 1U, 32U);
-//         break;
-//     default:
-//         return quarantine(ctx, AS608_STATUS_UNEXPECTED_REPLY);
-//     }
-//     return finish(ctx, AS608_ACK_OK);
-// }
-// 
-// static as608_progress_t success_ack(as608_t *ctx, const as608_transaction_frame_t *frame)
-// {
-//     switch (ctx->step) {
-//     case STEP_SIMPLE_ACK:
-//         return finish(ctx, AS608_ACK_OK);
-//     case STEP_LOAD_ACK:
-//         return accept_load_ack(ctx);
-//     case STEP_UP_ACK:
-//     case STEP_INFO_ACK:
-//         ctx->step = ctx->step == STEP_UP_ACK ? STEP_UP_DATA : STEP_INFO_DATA;
-//         as608_transaction_receive(&ctx->transaction, ctx->stream_capacity - ctx->stream_offset);
-//         return AS608_PENDING;
-//     case STEP_PARAMS_ACK:
-//         return accept_download_parameters(ctx);
-//     case STEP_DOWN_ACK:
-//         return accept_download_ack(ctx);
-//     default:
-//         return accept_reply(ctx, frame);
-//     }
-// }
-// 
-// static as608_progress_t verified_packet(as608_t *ctx, const as608_transaction_frame_t *frame)
-// {
-//     if (is_stream(ctx)) return accept_stream(ctx);
-//     if (!ack_valid(ctx, frame)) return quarantine(ctx, AS608_STATUS_UNEXPECTED_REPLY);
-//     if (frame->data[0] != AS608_ACK_OK) return finish(ctx, frame->data[0]);
-//     return success_ack(ctx, frame);
-// }
-// 
-

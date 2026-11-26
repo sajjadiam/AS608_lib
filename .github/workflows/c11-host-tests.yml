@@ -23,8 +23,6 @@ jobs:
           ./build/test_transaction
           ${{ matrix.compiler }} -std=c11 -Wall -Wextra -Werror -pedantic -I. as608_packet.c test_as608_packet.c -o build/test_packet
           ./build/test_packet
-          # Full command/async suites remain in the repository as regression
-          # references; re-enable them as their APIs become linkable.
           ${{ matrix.compiler }} -std=c11 -Wall -Wextra -Werror -pedantic -I. as608_packet.c as608_transaction.c as608.c test_as608_init.c -o build/test_init
           ./build/test_init
           ${{ matrix.compiler }} -std=c11 -Wall -Wextra -Werror -pedantic -I. as608_packet.c as608_transaction.c as608.c test_as608_process.c -o build/test_process
@@ -69,3 +67,11 @@ jobs:
           ./build/test_write_template
           ${{ matrix.compiler }} -std=c11 -Wall -Wextra -Werror -pedantic -I. as608_packet.c as608_transaction.c as608.c test_as608_delete_templates.c -o build/test_delete_templates
           ./build/test_delete_templates
+          ${{ matrix.compiler }} -std=c11 -Wall -Wextra -Werror -pedantic -I. as608_packet.c as608_transaction.c as608.c test_as608_empty_database.c -o build/test_empty_database
+          ./build/test_empty_database
+          ${{ matrix.compiler }} -std=c11 -Wall -Wextra -Werror -pedantic -I. as608_packet.c as608_transaction.c as608.c test_as608_commands.c -o build/test_commands
+          ./build/test_commands
+          ${{ matrix.compiler }} -std=c11 -Wall -Wextra -Werror -pedantic -I. as608_packet.c as608_transaction.c as608.c test_as608_async.c -o build/test_async
+          ./build/test_async
+          ${{ matrix.compiler }} -std=c11 -Wall -Wextra -Werror -pedantic -I. as608_packet.c as608_transaction.c as608.c test_as608_async_faults.c -o build/test_async_faults
+          ./build/test_async_faults

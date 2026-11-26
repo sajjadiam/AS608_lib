@@ -6,16 +6,17 @@ physical sensor. Historical hardware validation: two AS608_QCCF modules on
 STM32F103C8T6, USART1/USART2, 57,600 baud, 8N2; successful 768-byte template
 transfer. The unified non-blocking port still needs hardware validation.
 
-## Incremental API rebuild — active stage 22
+## Incremental API rebuild — active stage 23
 
-The five lifecycle APIs and fifteen command APIs (0x13, 0x0F, 0x1D, 0x1F, 0x16, 0x01, 0x02, 0x03, 0x05, 0x04, 0x07, 0x08, 0x09, 0x06, 0x0C)
+The five lifecycle APIs and eighteen command/job APIs covering sixteen opcodes (0x13, 0x0F, 0x1D, 0x1F, 0x16, 0x01, 0x02, 0x03, 0x05, 0x04, 0x07, 0x08, 0x09, 0x06, 0x0C, 0x0D)
 are currently compiled from as608.c. Process supports simple,
 system-parameter, 16-bit result, search and index-table ACK phases, plus the
 512-byte information-page and 512/768-byte template upload/download streams.
-The composite read and write APIs chain their commands under a single job deadline. The previous implementation is preserved as line
-comments below the active sections, excluding migrated definitions. Each subsequent
-API will be restored in header order, with its required static helpers
-above it and explicit section boundaries. The process dispatcher (API 02)
+The composite read and write APIs chain their commands under a single job deadline.
+All baseline APIs are restored; the obsolete commented reference is removed
+and remains available in Git history (commit 53425e4). Keep API sections in
+header order, with required static helpers above their first use and explicit
+section boundaries. The process dispatcher (API 02)
 is placed after active command sections so reply handlers need no forward
 declarations. Shared lifecycle helpers and named command/step enums are
 at the top of as608.c. Add new opcodes to the single command enum.
@@ -23,12 +24,10 @@ Every active static function has a short English purpose comment immediately
 above its definition; follow this convention for newly added helpers.
 The packet and transaction layers are unchanged.
 
-This is intentionally an incomplete, non-deployable command layer:
-the other declarations in as608.h cannot currently be linked. The
-command/async regression sources are retained but not built until their
-required APIs are restored. CI still builds the independent packet and
-transaction tests and the API 01–22 tests. Previous command examples and
-coverage below describe the historical baseline, not this active stage.
+All 23 baseline APIs are now implemented. CI builds independent packet and
+transaction tests, API 01–23 dedicated tests, and full command/async/fault
+regressions. Additional planned APIs are declarations only. Target hardware
+validation and the DownChar final-ACK compatibility check remain outstanding.
 
 ## Flat project structure
 
@@ -62,6 +61,7 @@ AS608_lib/
 ├── test_as608_read_template.c    Active API 20 composite read tests
 ├── test_as608_write_template.c   Active API 21 composite write tests
 ├── test_as608_delete_templates.c Active API 22 range deletion tests
+├── test_as608_empty_database.c  Active API 23 database clear tests
 ├── test_as608_transaction.c      Independent transport tests
 ├── test_as608_packet.c           Packet tests
 ├── test_as608_commands.c         Full command and template regression tests
@@ -254,7 +254,14 @@ cc -std=c11 -Wall -Wextra -Werror -pedantic -I. as608_packet.c as608_transaction
 ./build/test_write_template
 cc -std=c11 -Wall -Wextra -Werror -pedantic -I. as608_packet.c as608_transaction.c as608.c test_as608_delete_templates.c -o build/test_delete_templates
 ./build/test_delete_templates
-# Full command/async regression tests are temporarily inactive.
+cc -std=c11 -Wall -Wextra -Werror -pedantic -I. as608_packet.c as608_transaction.c as608.c test_as608_empty_database.c -o build/test_empty_database
+./build/test_empty_database
+cc -std=c11 -Wall -Wextra -Werror -pedantic -I. as608_packet.c as608_transaction.c as608.c test_as608_commands.c -o build/test_commands
+./build/test_commands
+cc -std=c11 -Wall -Wextra -Werror -pedantic -I. as608_packet.c as608_transaction.c as608.c test_as608_async.c -o build/test_async
+./build/test_async
+cc -std=c11 -Wall -Wextra -Werror -pedantic -I. as608_packet.c as608_transaction.c as608.c test_as608_async_faults.c -o build/test_async_faults
+./build/test_async_faults
 ```
 
 ## Full command API design
