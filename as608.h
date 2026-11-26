@@ -37,6 +37,9 @@ extern "C" {
 #define AS608_INFORMATION_PAGE_BYTES ((size_t)512U)
 /** @brief Fixed width of an AS60x information-page descriptor. */
 #define AS608_DEVICE_DESCRIPTOR_BYTES ((size_t)8U)
+/** @brief Documented user-flash notepad page size and count (verify on target). */
+#define AS608_NOTEPAD_PAGE_BYTES ((size_t)32U)
+#define AS608_NOTEPAD_PAGE_COUNT 16U
 /**
  * @brief AS60x device confirmation codes (wire values, not ordinal values).
  * @details From the AS60x communication manual, confirmation-code table.
@@ -147,6 +150,12 @@ typedef struct {
     uint8_t manufacturer[AS608_DEVICE_DESCRIPTOR_BYTES];
     uint8_t sensor_name[AS608_DEVICE_DESCRIPTOR_BYTES];
 } as608_device_info_t;
+
+/** Notepad page request/result. Each write replaces the full page. */
+typedef struct {
+    uint8_t page; /**< 0..15 according to the manual; verify on target. */
+    uint8_t data[AS608_NOTEPAD_PAGE_BYTES];
+} as608_notepad_page_t;
 
 /** @brief Successful fingerprint search output. */
 typedef struct {
@@ -313,7 +322,7 @@ as608_status_t as608_init(as608_t *ctx, const as608_config_t *config);
  * @post A valid terminal ACK sets DONE and stores its raw confirmation
  * code. A transport/protocol fault during BUSY sets DESYNCHRONIZED and
  * records the host error; a non-BUSY context is left unchanged.
- * @note At rebuild stage 39, simple, system-parameter, 16/32-bit result,
+ * @note At rebuild stage 40, simple, system-parameter, 16/32-bit result,
  * index-table and search ACK phases plus information-page, template,
  * feature and image upload streaming are active. Template, feature and
  * image download streaming is also supported.
@@ -1573,6 +1582,38 @@ as608_status_t as608_get_random_code_start(as608_t *ctx, uint32_t *code);
  */
 as608_status_t as608_set_device_address_start(as608_t *ctx, uint32_t address);
 
+/**
+ * @brief Start replacing a complete user-flash notepad page (opcode 0x18).
+ *
+ * @details Sends page index 0..15 followed by all 32 data bytes in one
+ * command payload (34 bytes). The transport copies the complete frame
+ * before admission returns. A one-byte confirmation is expected.
+ *
+ * @param[in,out] ctx Initialized caller-owned device context.
+ * @param[in] page Readable page index and full replacement contents.
+ * @retval AS608_STATUS_OK Job admitted; flash write not yet confirmed.
+ * @retval AS608_STATUS_INVALID_ARG Null context or page, or page >= 16.
+ * @retval AS608_STATUS_NOT_INITIALIZED Context is not initialized.
+ * @retval AS608_STATUS_BUSY Another job owns the context.
+ * @retval AS608_STATUS_RECOVERY_REQUIRED Link is quarantined.
+ * @pre Serialize calls on ctx. The page must be valid and immutable
+ * during admission and separate from driver storage. Verify the actual
+ * user-flash capacity and command support on target firmware.
+ * @post The descriptor is not retained or modified. It may be reused
+ * after the start call returns. A valid terminal ACK is exposed through
+ * as608_get_result(); negative confirmations are preserved unchanged.
+ * @warning Every write replaces all 32 bytes. Flash contents may be
+ * uncertain after timeout, abort or a transport fault; no automatic
+ * retry, read-modify-write, wear leveling or power-loss atomicity guarantee.
+ * ACK_OK does not independently prove persistence. Verify by readback.
+ * @note The 512-byte layout follows section 2.4 and the command's
+ * page-index table, despite the inconsistent 256-byte prose on p. 28.
+ * @see as608_process
+ * @see as608_get_result
+ * @see AS60x MCU User's Guide V1.0, section 2.4 and printed page 28.
+ */
+as608_status_t as608_write_notepad_start(as608_t *ctx, const as608_notepad_page_t *page);
+
 /* -------------------------------------------------------------------------
  * Planned API contracts (declarations only; NOT implemented or linkable).
  *
@@ -1585,10 +1626,6 @@ as608_status_t as608_set_device_address_start(as608_t *ctx, uint32_t address);
  * descriptors and referenced memory must stay valid through termination.
  * ------------------------------------------------------------------------- */
 #if defined(AS608_DECLARE_PLANNED_API)
-
-/** Documented AS60x V1.0 sizes; actual firmware support must be verified. */
-#define AS608_NOTEPAD_PAGE_BYTES ((size_t)32U)
-#define AS608_NOTEPAD_PAGE_COUNT 16U
 
 /** Raw system status-register masks (ReadSysPara, manual p. 3). */
 typedef enum {
@@ -1609,12 +1646,6 @@ typedef enum {
     AS608_USER_GPIO_0 = 0,
     AS608_USER_GPIO_1 = 1
 } as608_user_gpio_t;
-
-/** Notepad page request/result. Each write replaces the full page. */
-typedef struct {
-    uint8_t page; /**< 0..15 according to the manual; verify on target. */
-    uint8_t data[AS608_NOTEPAD_PAGE_BYTES];
-} as608_notepad_page_t;
 
 /** GPIO request and echoed state from a successful reply. */
 typedef struct {
@@ -1649,10 +1680,6 @@ typedef struct {
 } as608_free_slot_t;
 
 /* ---- User flash, GPIO and firmware maintenance ---- */
-
-/** PS_WriteNotepad (0x18): write the full 32-byte page. */
-as608_status_t as608_write_notepad_start(as608_t *ctx,
-                                         const as608_notepad_page_t *page);
 
 /** PS_ReadNotepad (0x19): data committed on a successful ACK only. */
 as608_status_t as608_read_notepad_start(as608_t *ctx,

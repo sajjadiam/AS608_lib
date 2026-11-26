@@ -32,6 +32,7 @@ enum as608_command {
     CMD_SET_ADDRESS = 0x15,
     CMD_READ_INFO = 0x16,
     CMD_PORT_CONTROL = 0x17,
+    CMD_WRITE_NOTEPAD = 0x18,
     CMD_HIGH_SPEED_SEARCH = 0x1B,
     CMD_GEN_BIN_IMAGE = 0x1C,
     CMD_COUNT = 0x1D,
@@ -250,28 +251,28 @@ static as608_status_t start_allowed(const as608_t *ctx) {
 }
 
 /* Prepare the command frame and select its next processing phase. */
-static as608_status_t command_start(as608_t *ctx, const command_t *command) {
+static as608_status_t command_start(as608_t *ctx, const uint8_t *bytes, size_t length, uint8_t step) {
     const as608_transaction_frame_t frame = {
-        AS608_PACKET_COMMAND, command->bytes, command->length
+        AS608_PACKET_COMMAND, bytes, length
     };
     const as608_status_t status = as608_transaction_send(&ctx->transaction, &frame);
 
     if (status == AS608_STATUS_OK) {
-        ctx->step = command->step;
+        ctx->step = step;
     }
 
     return status;
 }
 
-/* Admit a command, start the job deadline and enter BUSY. */
-static as608_status_t launch(as608_t *ctx, const command_t *command) {
+/* Admit a command payload, start the job deadline and enter BUSY. */
+static as608_status_t launch_payload(as608_t *ctx, const uint8_t *bytes, size_t length, uint8_t step) {
     const as608_status_t allowed = start_allowed(ctx);
 
     if (allowed != AS608_STATUS_OK) {
         return allowed;
     }
 
-    const as608_status_t status = command_start(ctx, command);
+    const as608_status_t status = command_start(ctx, bytes, length, step);
 
     if (status != AS608_STATUS_OK) {
         return status;
@@ -287,6 +288,11 @@ static as608_status_t launch(as608_t *ctx, const command_t *command) {
     ctx->state = AS608_STATE_BUSY;
 
     return AS608_STATUS_OK;
+}
+
+/* Launch a short command using the shared payload admission path. */
+static as608_status_t launch(as608_t *ctx, const command_t *command) {
+    return launch_payload(ctx, command->bytes, command->length, command->step);
 }
 
 /* Launch a password command with a big-endian 32-bit value. */
@@ -929,12 +935,12 @@ static as608_progress_t accept_download_parameters(as608_t *ctx) {
 
         const command_t command = {{CMD_DOWN_IMAGE}, 1U, STEP_DOWN_ACK};
 
-        return next_or_fault(ctx, command_start(ctx, &command));
+        return next_or_fault(ctx, command_start(ctx, command.bytes, command.length, command.step));
     }
 
     const command_t command = {{CMD_DOWN_CHAR, (uint8_t)ctx->download_buffer}, 2U, STEP_DOWN_ACK};
 
-    return next_or_fault(ctx, command_start(ctx, &command));
+    return next_or_fault(ctx, command_start(ctx, command.bytes, command.length, command.step));
 }
 
 /* Start sending fragments only after a valid readiness ACK. */
@@ -1034,7 +1040,7 @@ static as608_progress_t accept_load_ack(as608_t *ctx) {
 
     const command_t command = {{CMD_UP_CHAR, AS608_CHAR_BUFFER_1}, 2U, STEP_UP_ACK};
 
-    return next_or_fault(ctx, command_start(ctx, &command));
+    return next_or_fault(ctx, command_start(ctx, command.bytes, command.length, command.step));
 }
 
 as608_status_t as608_read_template_start(as608_t *ctx, uint16_t page_id, as608_template_buffer_t *output) {
@@ -1069,7 +1075,7 @@ static as608_progress_t download_drained(as608_t *ctx) {
 
     const command_t command = page_command(CMD_STORE_CHAR, ctx->download_buffer, ctx->page_id);
 
-    return next_or_fault(ctx, command_start(ctx, &command));
+    return next_or_fault(ctx, command_start(ctx, command.bytes, command.length, command.step));
 }
 
 as608_status_t as608_write_template_start(as608_t *ctx, uint16_t page_id, const uint8_t *data, size_t length) {
@@ -1559,6 +1565,28 @@ as608_status_t as608_set_device_address_start(as608_t *ctx, uint32_t address) {
 
 /* =========================================================================
  * END API 39
+ * ========================================================================= */
+
+/* =========================================================================
+ * API 40: as608_write_notepad_start
+ * =========================================================================
+ * PS_WriteNotepad (0x18), AS60x MCU User's Guide V1.0, section 2.4, p. 28.
+ * Replaces the entire 32-byte user flash page.
+ */
+
+as608_status_t as608_write_notepad_start(as608_t *ctx, const as608_notepad_page_t *page) {
+    if (!page || (page->page >= AS608_NOTEPAD_PAGE_COUNT)) {
+        return AS608_STATUS_INVALID_ARG;
+    }
+
+    uint8_t bytes[2U + AS608_NOTEPAD_PAGE_BYTES] = {CMD_WRITE_NOTEPAD, page->page};
+    (void)memcpy(bytes + 2U, page->data, AS608_NOTEPAD_PAGE_BYTES);
+
+    return launch_payload(ctx, bytes, sizeof(bytes), STEP_SIMPLE_ACK);
+}
+
+/* =========================================================================
+ * END API 40
  * ========================================================================= */
 
 /* =========================================================================
