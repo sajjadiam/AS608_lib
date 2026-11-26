@@ -22,6 +22,7 @@ enum as608_command {
     CMD_DOWN_IMAGE = 0x0B,
     CMD_DELETE_CHAR = 0x0C,
     CMD_EMPTY = 0x0D,
+    CMD_WRITE_REG = 0x0E,
     CMD_READ_PARAMS = 0x0F,
     CMD_ENROLL = 0x10,
     CMD_IDENTIFY = 0x11,
@@ -31,6 +32,10 @@ enum as608_command {
     CMD_GEN_BIN_IMAGE = 0x1C,
     CMD_COUNT = 0x1D,
     CMD_READ_INDEX = 0x1F
+};
+
+enum as608_register {
+    REG_BAUD_RATE = 0x04
 };
 
 enum as608_step {
@@ -1298,6 +1303,31 @@ as608_status_t as608_generate_binary_image_start(as608_t *ctx, as608_image_mode_
 
 /* =========================================================================
  * END API 31
+ * ========================================================================= */
+
+/* =========================================================================
+ * API 32: as608_set_baud_rate_start
+ * =========================================================================
+ * PS_WriteReg (0x0E), AS60x Communication Manual V1.0, p. 19.
+ * Register 4 selects UART baud rate as 9600 times the multiplier.
+ * Restrict the multiplier to the AS608 module profile (1 through 12).
+ */
+
+as608_status_t as608_set_baud_rate_start(as608_t *ctx, uint32_t baud_rate) {
+    if ((baud_rate < UINT32_C(9600)) || (baud_rate > UINT32_C(115200)) ||
+        ((baud_rate % UINT32_C(9600)) != 0U)) {
+        return AS608_STATUS_INVALID_ARG;
+    }
+
+    const command_t command = {{
+        CMD_WRITE_REG, REG_BAUD_RATE, (uint8_t)(baud_rate / UINT32_C(9600))
+    }, 3U, STEP_SIMPLE_ACK};
+
+    return launch(ctx, &command);
+}
+
+/* =========================================================================
+ * END API 32
  * ========================================================================= */
 
 /* =========================================================================

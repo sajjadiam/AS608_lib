@@ -282,7 +282,7 @@ as608_status_t as608_init(as608_t *ctx, const as608_config_t *config);
  * @post A valid terminal ACK sets DONE and stores its raw confirmation
  * code. A transport/protocol fault during BUSY sets DESYNCHRONIZED and
  * records the host error; a non-BUSY context is left unchanged.
- * @note At rebuild stage 31, simple, system-parameter, 16-bit result,
+ * @note At rebuild stage 32, simple, system-parameter, 16-bit result,
  * index-table and search ACK phases plus information-page, template,
  * feature and image upload streaming are active. Template, feature and
  * image download streaming is also supported.
@@ -1271,6 +1271,45 @@ as608_status_t as608_download_image_start(as608_t *ctx, const as608_stream_sourc
  */
 as608_status_t as608_generate_binary_image_start(as608_t *ctx, as608_image_mode_t mode);
 
+/**
+ * @brief Start changing the sensor UART baud rate (PS_WriteReg, 0x0E).
+ *
+ * @details Register 4 stores the multiplier of 9600. This driver accepts
+ * the AS608 module profile, multipliers 1 through 12 (9600..115200 bps),
+ * rather than the wider generic AS60x SOC range. The ACK is received
+ * using the old UART configuration. The manual describes a subsequent
+ * configuration update and persistence in flash.
+ *
+ * @param[in,out] ctx Initialized caller-owned device context.
+ * @param[in] baud_rate Requested UART rate in bits per second, a multiple
+ * of 9600 between 9600 and 115200 inclusive.
+ * @retval AS608_STATUS_OK Job admitted; register update not yet confirmed.
+ * @retval AS608_STATUS_INVALID_ARG Null context or unsupported baud rate.
+ * @retval AS608_STATUS_NOT_INITIALIZED Context is not initialized.
+ * @retval AS608_STATUS_BUSY Another job owns the context.
+ * @retval AS608_STATUS_RECOVERY_REQUIRED Link is quarantined.
+ * @pre Serialize calls on ctx. Verify the module and host UART support
+ * the requested baud rate, and retain a physical recovery path.
+ * @post A validated ACK is exposed through as608_get_result().
+ * No host UART settings or port callbacks are reconfigured by the driver.
+ * @warning Keep the old UART rate through ACK reception. After ACK_OK,
+ * the application must wait for the target-specific configuration change
+ * and synchronize its UART before starting another job. ACK_OK alone
+ * does not verify flash persistence or communication at the new rate.
+ * After timeout, abort or transport fault, the sensor rate may be unknown.
+ * Re-establish the physical link before confirming recovery. No auto-retry.
+ * @note Check both result fields. A negative sensor ACK is not a host
+ * transport fault. Verify the new rate with a separate ReadSysPara job
+ * after synchronization; actual supported rates depend on firmware.
+ * @see as608_read_parameters_start
+ * @see as608_process
+ * @see as608_get_result
+ * @see as608_confirm_reset
+ * @see AS60x Communication Manual V1.0, printed page 19.
+ * @see ATK-AS608 Fingerprint Sensor User Manual, UART specifications.
+ */
+as608_status_t as608_set_baud_rate_start(as608_t *ctx, uint32_t baud_rate);
+
 /* -------------------------------------------------------------------------
  * Planned API contracts (declarations only; NOT implemented or linkable).
  *
@@ -1376,13 +1415,6 @@ typedef struct {
 } as608_free_slot_t;
 
 /* ---- Configuration (PS_WriteReg 0x0E, typed register setters) ---- */
-
-/** Set register 4. baud_rate must be a supported multiple of 9600.
- * Sensor ACK uses the old configuration (manual p. 19). On success,
- * application must reconfigure its UART to the new rate before starting
- * another job. No automatic baud guessing or HAL configuration.
- */
-as608_status_t as608_set_baud_rate_start(as608_t *ctx, uint32_t baud_rate);
 
 /** Set register 5, level 1..5. */
 as608_status_t as608_set_security_level_start(as608_t *ctx,

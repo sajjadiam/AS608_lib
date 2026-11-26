@@ -6,9 +6,9 @@ This checklist tracks the host library against the Synochip AS60x Communication 
 
 - Checked: implemented in the non-blocking core, within the stated scope.
 - Unchecked: missing, incomplete, or awaiting the indicated validation.
-- Command coverage: **22/31 (71.0%)**; 9 commands remain. UpChar and DownChar are implemented with limited file-size support.
+- Command coverage: **23/31 (74.2%)**; 8 commands remain. UpChar and DownChar are implemented with limited file-size support.
 - Implementation is not equivalent to hardware validation or universal firmware compatibility.
-- API design: all 31 documented opcodes have contracts in [as608.h](as608.h). The 9 missing commands are declarations only under `AS608_DECLARE_PLANNED_API`; they remain unchecked until implemented and tested.
+- API design: all 31 documented opcodes have contracts in [as608.h](as608.h). The 8 missing commands are declarations only under `AS608_DECLARE_PLANNED_API`; they remain unchecked until implemented and tested.
 
 ## Active rebuild status (current source)
 
@@ -43,11 +43,12 @@ This checklist tracks the host library against the Synochip AS60x Communication 
 - [x] API 29: `as608_upload_image_start()` — PS_UpImage (0x0A), exact-length callback stream without image-sized storage; dedicated host tests, hardware support unverified.
 - [x] API 30: `as608_download_image_start()` — PS_DownImage (0x0B), callback source with bounded polling, negotiated 64/128/256-byte fragments and TX drain; hardware support unverified.
 - [x] API 31: `as608_generate_binary_image_start()` — PS_GenBinImage (0x1C), validated modes 0–2 and simple ACK; dedicated host tests, hardware support unverified.
+- [x] API 32: `as608_set_baud_rate_start()` — PS_WriteReg (0x0E), register 4, AS608 multipliers 1–12; dedicated host tests, UART synchronization and hardware support unverified.
 - [ ] Remaining planned APIs under `AS608_DECLARE_PLANNED_API`.
 
-Active wire-command coverage: **22/31** (PS_VfyPwd 0x13, PS_ReadSysPara 0x0F, PS_ValidTempleteNum 0x1D, PS_ReadIndexTable 0x1F, PS_ReadINFpage 0x16, PS_GetImage 0x01, PS_GenChar 0x02, PS_Match 0x03, PS_RegModel 0x05, PS_Search 0x04, PS_LoadChar 0x07, PS_UpChar 0x08, PS_DownChar 0x09, PS_StoreChar 0x06, PS_DeletChar 0x0C, PS_Empty 0x0D, PS_Enroll 0x10, PS_Identify 0x11, PS_HighSpeedSearch 0x1B, PS_UpImage 0x0A, PS_DownImage 0x0B, PS_GenBinImage 0x1C).
-All 23 baseline APIs are restored and APIs 24–31 are implemented. The independent, dedicated and full
-command/async regression suites are enabled in CI. The 9 remaining
+Active wire-command coverage: **23/31** (PS_VfyPwd 0x13, PS_ReadSysPara 0x0F, PS_ValidTempleteNum 0x1D, PS_ReadIndexTable 0x1F, PS_ReadINFpage 0x16, PS_GetImage 0x01, PS_GenChar 0x02, PS_Match 0x03, PS_RegModel 0x05, PS_Search 0x04, PS_LoadChar 0x07, PS_UpChar 0x08, PS_DownChar 0x09, PS_StoreChar 0x06, PS_DeletChar 0x0C, PS_Empty 0x0D, PS_Enroll 0x10, PS_Identify 0x11, PS_HighSpeedSearch 0x1B, PS_UpImage 0x0A, PS_DownImage 0x0B, PS_GenBinImage 0x1C, PS_WriteReg 0x0E).
+All 23 baseline APIs are restored and APIs 24–32 are implemented. The independent, dedicated and full
+command/async regression suites are enabled in CI. The 8 remaining
 opcodes are planned, not implemented. Current firmware validation remains
 outstanding; historical hardware results are not new validation.
 
@@ -98,13 +99,14 @@ Additional template capabilities:
 
 ## 4. System configuration and information
 
-- [ ] `0x0E PS_WriteReg` — Write baud multiplier, security level or packet-size register. Planned: `as608_set_baud_rate_start()`, `as608_set_security_level_start()`, `as608_set_packet_size_start()`.
+- [x] `0x0E PS_WriteReg` — Baud multiplier (register 4), `as608_set_baud_rate_start()`. Security level and packet-size setters remain planned; opcode coverage is partial.
 - [x] `0x0F PS_ReadSysPara` — Read 16-byte system parameters; `as608_read_parameters_start()`.
 - [x] `0x16 PS_ReadINFpage` — Read 512-byte flash information page; `as608_read_information_page_start()`.
 - [ ] `0x17 PS_Port_Control` — Enable/disable the other communication interface (UART/USB). Planned: `as608_control_other_port_start()`.
 - [x] Read status register, sensor type, capacity, security level, address, packet-size code and baud multiplier.
 - [ ] Typed status flags: busy, pass, password verified, valid image.
-- [ ] Set baud rate (register 4) and synchronize host UART reconfiguration after ACK.
+- [x] Set baud rate (register 4), multiples of 9600 from 9600 to 115200; host UART reconfiguration remains caller-owned.
+- [ ] Verify target rate support, ACK timing, flash persistence and host UART synchronization on hardware.
 - [ ] Set security level 1–5 (register 5).
 - [ ] Set packet-size code 0–3 (register 6).
 - [ ] Parse product, firmware, manufacturer and sensor descriptors from the information page where verified. Planned: `as608_read_device_info_start()`.

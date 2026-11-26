@@ -85,6 +85,8 @@ jobs:
           ./build/test_download_image
           ${{ matrix.compiler }} -std=c11 -Wall -Wextra -Werror -pedantic -I. as608_packet.c as608_transaction.c as608.c test_as608_generate_binary_image.c -o build/test_generate_binary_image
           ./build/test_generate_binary_image
+          ${{ matrix.compiler }} -std=c11 -Wall -Wextra -Werror -pedantic -I. as608_packet.c as608_transaction.c as608.c test_as608_set_baud_rate.c -o build/test_set_baud_rate
+          ./build/test_set_baud_rate
           ${{ matrix.compiler }} -std=c11 -Wall -Wextra -Werror -pedantic -I. as608_packet.c as608_transaction.c as608.c test_as608_commands.c -o build/test_commands
           ./build/test_commands
           ${{ matrix.compiler }} -std=c11 -Wall -Wextra -Werror -pedantic -I. as608_packet.c as608_transaction.c as608.c test_as608_async.c -o build/test_async
