@@ -35,6 +35,8 @@ extern "C" {
 #define AS608_TEMPLATE_BYTES AS608_TEMPLATE_MAX_BYTES
 /** @brief Size of the flash information page returned by ReadINFpage. */
 #define AS608_INFORMATION_PAGE_BYTES ((size_t)512U)
+/** @brief Fixed width of an AS60x information-page descriptor. */
+#define AS608_DEVICE_DESCRIPTOR_BYTES ((size_t)8U)
 /**
  * @brief AS60x device confirmation codes (wire values, not ordinal values).
  * @details From the AS60x communication manual, confirmation-code table.
@@ -134,6 +136,17 @@ typedef struct {
     uint16_t packet_size_code;   /**< Encoded transfer packet size. */
     uint16_t baud_multiplier;    /**< UART baud = multiplier * 9600. */
 } as608_parameters_t;
+
+/** Fixed-width descriptor bytes, NOT guaranteed NUL-terminated.
+ * Raw wire bytes from the documented AS60x layout; verify on target.
+ * product_model is not a guaranteed unique device serial number.
+ */
+typedef struct {
+    uint8_t product_model[AS608_DEVICE_DESCRIPTOR_BYTES];
+    uint8_t software_version[AS608_DEVICE_DESCRIPTOR_BYTES];
+    uint8_t manufacturer[AS608_DEVICE_DESCRIPTOR_BYTES];
+    uint8_t sensor_name[AS608_DEVICE_DESCRIPTOR_BYTES];
+} as608_device_info_t;
 
 /** @brief Successful fingerprint search output. */
 typedef struct {
@@ -241,6 +254,7 @@ typedef struct {
     as608_stream_write_fn stream_write;
     void *stream_user;
     as608_stream_read_fn stream_read;
+    uint8_t device_info_data[4U * AS608_DEVICE_DESCRIPTOR_BYTES];
 } as608_t;
 
 /**
@@ -299,7 +313,7 @@ as608_status_t as608_init(as608_t *ctx, const as608_config_t *config);
  * @post A valid terminal ACK sets DONE and stores its raw confirmation
  * code. A transport/protocol fault during BUSY sets DESYNCHRONIZED and
  * records the host error; a non-BUSY context is left unchanged.
- * @note At rebuild stage 35, simple, system-parameter, 16-bit result,
+ * @note At rebuild stage 36, simple, system-parameter, 16-bit result,
  * index-table and search ACK phases plus information-page, template,
  * feature and image upload streaming are active. Template, feature and
  * image download streaming is also supported.
@@ -1424,6 +1438,38 @@ as608_status_t as608_set_packet_size_start(as608_t *ctx, as608_packet_size_t siz
  */
 as608_status_t as608_control_other_port_start(as608_t *ctx, bool enabled);
 
+/**
+ * @brief Start reading fixed-width device descriptors (PS_ReadINFpage, 0x16).
+ *
+ * @details Validates the entire 512-byte stream, retaining only the
+ * 32 descriptor bytes at offsets 28 through 59. Each 8-byte field
+ * preserves wire order without character conversion or NUL termination.
+ * SensorName uses inferred word address 0x21A (the English manual
+ * prints 0x20A, inconsistent with the four-word sequential layout).
+ *
+ * @param[in,out] ctx Initialized caller-owned device context.
+ * @param[out] info Writable caller-owned descriptor result.
+ * @retval AS608_STATUS_OK Job admitted; output not yet available.
+ * @retval AS608_STATUS_INVALID_ARG Null context or output.
+ * @retval AS608_STATUS_NOT_INITIALIZED Context is not initialized.
+ * @retval AS608_STATUS_BUSY Another job owns the context.
+ * @retval AS608_STATUS_RECOVERY_REQUIRED Link is quarantined.
+ * @pre Serialize calls on ctx. Keep info valid and separate from
+ * driver storage through completion or abort. Verify the page origin,
+ * descriptor layout and byte order on the target firmware.
+ * @post Only successful receipt of all 512 bytes with a valid END_DATA
+ * changes info. Admission rejection, negative ACK, fault or abort
+ * leaves all descriptor fields unchanged. No full-page allocation.
+ * @note Check both result fields. Descriptor contents are not validated
+ * as text or as unique identifiers. Use the raw information-page API
+ * for variants with a different layout.
+ * @see as608_read_information_page_start
+ * @see as608_process
+ * @see as608_get_result
+ * @see AS60x MCU User's Guide V1.0, section 2.1, printed pages 5–6.
+ */
+as608_status_t as608_read_device_info_start(as608_t *ctx, as608_device_info_t *info);
+
 /* -------------------------------------------------------------------------
  * Planned API contracts (declarations only; NOT implemented or linkable).
  *
@@ -1440,7 +1486,6 @@ as608_status_t as608_control_other_port_start(as608_t *ctx, bool enabled);
 /** Documented AS60x V1.0 sizes; actual firmware support must be verified. */
 #define AS608_NOTEPAD_PAGE_BYTES ((size_t)32U)
 #define AS608_NOTEPAD_PAGE_COUNT 16U
-#define AS608_DEVICE_DESCRIPTOR_BYTES ((size_t)8U)
 
 /** Raw system status-register masks (ReadSysPara, manual p. 3). */
 typedef enum {
@@ -1475,17 +1520,6 @@ typedef struct {
     bool actual_level; /**< Echoed output state, success only. */
 } as608_gpio_request_t;
 
-/** Fixed-width descriptor bytes, NOT guaranteed NUL-terminated.
- * Parsed from the information page only after layout verification.
- * product_model is not a guaranteed unique device serial number.
- */
-typedef struct {
-    uint8_t product_model[AS608_DEVICE_DESCRIPTOR_BYTES];
-    uint8_t software_version[AS608_DEVICE_DESCRIPTOR_BYTES];
-    uint8_t manufacturer[AS608_DEVICE_DESCRIPTOR_BYTES];
-    uint8_t sensor_name[AS608_DEVICE_DESCRIPTOR_BYTES];
-} as608_device_info_t;
-
 /** Firmware request. Caller must verify device, image and recovery path.
  * The stream describes the vendor-format image, not arbitrary flash data.
  */
@@ -1510,12 +1544,6 @@ typedef struct {
     bool found;
     uint16_t page_id;
 } as608_free_slot_t;
-
-/* ---- Configuration and device information ---- */
-
-/** Composite ReadINFpage (0x16) + descriptor decoding. */
-as608_status_t as608_read_device_info_start(as608_t *ctx,
-                                            as608_device_info_t *info);
 
 /* ---- Password, address and random number ---- */
 

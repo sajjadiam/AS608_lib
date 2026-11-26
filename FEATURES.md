@@ -47,10 +47,11 @@ This checklist tracks the host library against the Synochip AS60x Communication 
 - [x] API 33: `as608_set_security_level_start()` — PS_WriteReg (0x0E), register 5, levels 1–5; dedicated host tests, hardware support unverified.
 - [x] API 34: `as608_set_packet_size_start()` — PS_WriteReg (0x0E), register 6, size codes 0–3; dedicated host tests, hardware support unverified.
 - [x] API 35: `as608_control_other_port_start()` — PS_Port_Control (0x17), boolean control of the other interface; dedicated host tests, hardware support unverified.
+- [x] API 36: `as608_read_device_info_start()` — PS_ReadINFpage (0x16), selective 32-byte staging and atomic descriptor output; dedicated host tests, target layout unverified.
 - [ ] Remaining planned APIs under `AS608_DECLARE_PLANNED_API`.
 
 Active wire-command coverage: **24/31** (PS_VfyPwd 0x13, PS_ReadSysPara 0x0F, PS_ValidTempleteNum 0x1D, PS_ReadIndexTable 0x1F, PS_ReadINFpage 0x16, PS_GetImage 0x01, PS_GenChar 0x02, PS_Match 0x03, PS_RegModel 0x05, PS_Search 0x04, PS_LoadChar 0x07, PS_UpChar 0x08, PS_DownChar 0x09, PS_StoreChar 0x06, PS_DeletChar 0x0C, PS_Empty 0x0D, PS_Enroll 0x10, PS_Identify 0x11, PS_HighSpeedSearch 0x1B, PS_UpImage 0x0A, PS_DownImage 0x0B, PS_GenBinImage 0x1C, PS_WriteReg 0x0E, PS_Port_Control 0x17).
-All 23 baseline APIs are restored and APIs 24–35 are implemented. The independent, dedicated and full
+All 23 baseline APIs are restored and APIs 24–36 are implemented. The independent, dedicated and full
 command/async regression suites are enabled in CI. The 7 remaining
 opcodes are planned, not implemented. Current firmware validation remains
 outstanding; historical hardware results are not new validation.
@@ -112,7 +113,8 @@ Additional template capabilities:
 - [ ] Verify target rate support, ACK timing, flash persistence and host UART synchronization on hardware.
 - [x] Set security level 1–5 (register 5); hardware readback, persistence and matching behavior unverified.
 - [x] Set packet-size code 0–3 (register 6); download jobs still read the actual setting. DownImage retains its 64/128/256-byte restriction.
-- [ ] Parse product, firmware, manufacturer and sensor descriptors from the information page where verified. Planned: `as608_read_device_info_start()`.
+- [x] Parse product, firmware, manufacturer and sensor descriptors from the full validated page: `as608_read_device_info_start()`; 32-byte staging, raw wire order.
+- [ ] Verify page origin, descriptor offsets and byte order on target; SensorName word address 0x21A is inferred from the four-word sequential layout.
 - [ ] Read-back and persistence verification for configuration writes.
 
 ## 5. Password, address and random number

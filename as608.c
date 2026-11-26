@@ -61,7 +61,9 @@ enum as608_step {
     STEP_FEATURE_DATA,
     STEP_IMAGE_ACK,
     STEP_IMAGE_DATA,
-    STEP_DOWN_SOURCE
+    STEP_DOWN_SOURCE,
+    STEP_DEVICE_INFO_ACK,
+    STEP_DEVICE_INFO_DATA
 };
 
 /* =========================================================================
@@ -487,13 +489,40 @@ static as608_progress_t accept_stream_ack(as608_t *ctx, enum as608_step data_ste
     return AS608_PENDING;
 }
 
+enum {
+    DEVICE_INFO_OFFSET = 28
+};
+
+/* Retain only the descriptor window and commit it after the full page. */
+static void collect_device_info(as608_t *ctx, const as608_transaction_frame_t *frame, size_t total, bool end) {
+    const size_t first = (ctx->stream_offset > DEVICE_INFO_OFFSET) ?
+        ctx->stream_offset : DEVICE_INFO_OFFSET;
+    const size_t stop = DEVICE_INFO_OFFSET + sizeof(ctx->device_info_data);
+    const size_t last = (total < stop) ? total : stop;
+
+    if (first < last) {
+        (void)memcpy(ctx->device_info_data + (first - DEVICE_INFO_OFFSET),
+                     frame->data + (first - ctx->stream_offset), last - first);
+    }
+
+    if (end) {
+        as608_device_info_t *info = ctx->reply_output;
+        const size_t n = AS608_DEVICE_DESCRIPTOR_BYTES;
+        (void)memcpy(info->product_model, ctx->device_info_data, n);
+        (void)memcpy(info->software_version, ctx->device_info_data + n, n);
+        (void)memcpy(info->manufacturer, ctx->device_info_data + 2U * n, n);
+        (void)memcpy(info->sensor_name, ctx->device_info_data + 3U * n, n);
+    }
+}
+
 /* Validate and deliver a stream fragment; commit length only on valid END_DATA. */
 static as608_progress_t accept_stream(as608_t *ctx) {
     const as608_transaction_frame_t frame = as608_transaction_received(&ctx->transaction);
 
     const bool image = (ctx->step == STEP_IMAGE_DATA);
+    const bool device_info = (ctx->step == STEP_DEVICE_INFO_DATA);
 
-    if ((image ? !ctx->stream_write : !ctx->stream_data) ||
+    if ((device_info ? !ctx->reply_output : (image ? !ctx->stream_write : !ctx->stream_data)) ||
         (ctx->stream_offset >= ctx->stream_capacity)) {
         return quarantine(ctx, AS608_STATUS_UNEXPECTED_REPLY);
     }
@@ -509,7 +538,7 @@ static as608_progress_t accept_stream(as608_t *ctx) {
     const bool end = (frame.kind == AS608_PACKET_END_DATA);
 
     if (end) {
-        if (ctx->step == STEP_INFO_DATA) {
+        if ((ctx->step == STEP_INFO_DATA) || device_info) {
             if (total != AS608_INFORMATION_PAGE_BYTES) {
                 return quarantine(ctx, AS608_STATUS_UNEXPECTED_REPLY);
             }
@@ -530,7 +559,9 @@ static as608_progress_t accept_stream(as608_t *ctx) {
         return quarantine(ctx, AS608_STATUS_UNEXPECTED_REPLY);
     }
 
-    if (image) {
+    if (device_info) {
+        collect_device_info(ctx, &frame, total, end);
+    } else if (image) {
         if (!ctx->stream_write(ctx->stream_user, frame.data, frame.length)) {
             return quarantine(ctx, AS608_STATUS_IO_ERROR);
         }
@@ -1393,6 +1424,30 @@ as608_status_t as608_control_other_port_start(as608_t *ctx, bool enabled) {
  * ========================================================================= */
 
 /* =========================================================================
+ * API 36: as608_read_device_info_start
+ * =========================================================================
+ * PS_ReadINFpage (0x16), AS60x MCU User's Guide V1.0, section 2.1.
+ * Extracts fixed-width descriptors only after the entire page is valid.
+ */
+
+as608_status_t as608_read_device_info_start(as608_t *ctx, as608_device_info_t *info) {
+    const command_t command = {{CMD_READ_INFO}, 1U, STEP_DEVICE_INFO_ACK};
+    const as608_status_t status = reply_start(ctx, &command, info);
+
+    if (status == AS608_STATUS_OK) {
+        ctx->stream_data = NULL;
+        ctx->stream_capacity = AS608_INFORMATION_PAGE_BYTES;
+        ctx->stream_offset = 0U;
+    }
+
+    return status;
+}
+
+/* =========================================================================
+ * END API 36
+ * ========================================================================= */
+
+/* =========================================================================
  * API 02: as608_process
  * =========================================================================
  * Keep the process dispatcher after the active command API sections so
@@ -1436,6 +1491,7 @@ as608_progress_t as608_process(as608_t *ctx) {
         case STEP_DOWN_ACK:
         case STEP_FEATURE_ACK:
         case STEP_IMAGE_ACK:
+        case STEP_DEVICE_INFO_ACK:
         case STEP_INFO_ACK: {
             limit = 1U;
             break;
@@ -1462,6 +1518,7 @@ as608_progress_t as608_process(as608_t *ctx) {
         case STEP_INFO_DATA:
         case STEP_FEATURE_DATA:
         case STEP_IMAGE_DATA:
+        case STEP_DEVICE_INFO_DATA:
         case STEP_DOWN_DATA:
         case STEP_DOWN_DRAIN: {
             limit = 0U; /* Stream handlers schedule their own transport phases. */
@@ -1485,7 +1542,8 @@ as608_progress_t as608_process(as608_t *ctx) {
             }
 
             if ((ctx->step == STEP_INFO_DATA) || (ctx->step == STEP_UP_DATA) || (ctx->step == STEP_FEATURE_DATA) ||
-                (ctx->step == STEP_IMAGE_DATA) || (ctx->step == STEP_DOWN_DRAIN)) {
+                (ctx->step == STEP_IMAGE_DATA) || (ctx->step == STEP_DEVICE_INFO_DATA) ||
+                (ctx->step == STEP_DOWN_DRAIN)) {
                 return quarantine(ctx, AS608_STATUS_UNEXPECTED_REPLY);
             }
 
@@ -1532,6 +1590,10 @@ as608_progress_t as608_process(as608_t *ctx) {
                 case STEP_IMAGE_ACK: {
                     return accept_stream_ack(ctx, STEP_IMAGE_DATA);
                 }
+                case STEP_DEVICE_INFO_ACK: {
+                    return accept_stream_ack(ctx, STEP_DEVICE_INFO_DATA);
+                }
+                case STEP_DEVICE_INFO_DATA:
                 case STEP_INFO_DATA:
                 case STEP_FEATURE_DATA:
                 case STEP_IMAGE_DATA:
