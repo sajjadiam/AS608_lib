@@ -371,10 +371,11 @@ as608_status_t as608_init(as608_t *ctx, const as608_config_t *config);
  * and stores its raw confirmation
  * code. A transport/protocol fault during BUSY sets DESYNCHRONIZED and
  * records the host error; a non-BUSY context is left unchanged.
- * @note At rebuild stage 44, simple, GPIO, system-parameter, 16/32-bit result,
+ * @note At rebuild stage 45, simple, GPIO, system-parameter, 16/32-bit result,
  * 32-byte index/notepad and search ACK phases plus information-page, template,
  * feature and image upload streaming are active. Template, feature and
- * image download streaming, experimental burn ACK-each and host two-scan enrollment are supported.
+ * image download streaming, experimental burn ACK-each, host two-scan
+ * enrollment and range identification are supported.
  * @see as608_get_result
  * @see as608_confirm_reset
  */
@@ -1804,6 +1805,39 @@ as608_status_t as608_burn_code_start(as608_t *ctx, const as608_firmware_request_
  */
 as608_status_t as608_enroll_two_scan_start(as608_t *ctx, const as608_enroll_request_t *request);
 
+/**
+ * @brief Start one host-managed identification attempt in a page range.
+ *
+ * @details GetImage, GenChar(requested buffer), Search(requested range).
+ * All three commands share the original job deadline. A negative ACK
+ * at any phase terminates the attempt; NO_FINGER is not polled or retried.
+ * Uses the ordinary Search opcode, not sensor-side Identify or HighSpeedSearch.
+ *
+ * @param[in,out] ctx Initialized caller-owned device context.
+ * @param[in,out] search Buffer, start page, nonzero page count and match output.
+ * @retval AS608_STATUS_OK Job admitted; match is not yet available.
+ * @retval AS608_STATUS_INVALID_ARG Null context/search, invalid buffer,
+ * zero count or range extending beyond the 16-bit PageID space.
+ * @retval AS608_STATUS_NOT_INITIALIZED Context is not initialized.
+ * @retval AS608_STATUS_BUSY Another job owns the context.
+ * @retval AS608_STATUS_RECOVERY_REQUIRED Physical link recovery required.
+ * @pre Serialize calls on ctx. Keep search valid and separate from driver
+ * storage; do not change any request fields until completion or abort.
+ * Caller must verify the range against actual sensor database capacity.
+ * @post Only a checksum-verified Search ACK_OK of length five with PageID
+ * inside the requested half-open range changes search->match.
+ * Negative ACK, rejected admission, protocol fault, timeout or abort
+ * leaves the output unchanged. Host faults quarantine the link.
+ * @note No flash-write command is sent. Capture and GenChar modify sensor
+ * working buffers. Check both result fields before using the match;
+ * its score is a raw sensor value, not a calibrated probability.
+ * @see as608_search_start
+ * @see as608_process
+ * @see as608_get_result
+ * @see AS60x MCU User's Guide V1.0, printed page 38, workflow (e).
+ */
+as608_status_t as608_identify_range_start(as608_t *ctx, as608_search_t *search);
+
 /* -------------------------------------------------------------------------
  * Planned API contracts (declarations only; NOT implemented or linkable).
  *
@@ -1834,9 +1868,6 @@ typedef struct {
 } as608_free_slot_t;
 
 /* ---- Host-managed composite operations (no extra wire opcodes) ---- */
-
-/** Capture, generate and search using the requested buffer/range. */
-as608_status_t as608_identify_range_start(as608_t *ctx, as608_search_t *search);
 
 /** Read capacity and index table(s) to find a free slot; no flash writes. */
 as608_status_t as608_find_free_slot_start(as608_t *ctx, as608_free_slot_t *slot);

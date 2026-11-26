@@ -111,6 +111,8 @@ jobs:
           ./build/test_burn_code
           ${{ matrix.compiler }} -std=c11 -Wall -Wextra -Werror -pedantic -I. as608_packet.c as608_transaction.c as608.c test_as608_enroll_two_scan.c -o build/test_enroll_two_scan
           ./build/test_enroll_two_scan
+          ${{ matrix.compiler }} -std=c11 -Wall -Wextra -Werror -pedantic -I. as608_packet.c as608_transaction.c as608.c test_as608_identify_range.c -o build/test_identify_range
+          ./build/test_identify_range
           ${{ matrix.compiler }} -std=c11 -Wall -Wextra -Werror -pedantic -I. as608_packet.c as608_transaction.c as608.c test_as608_commands.c -o build/test_commands
           ./build/test_commands
           ${{ matrix.compiler }} -std=c11 -Wall -Wextra -Werror -pedantic -I. as608_packet.c as608_transaction.c as608.c test_as608_async.c -o build/test_async

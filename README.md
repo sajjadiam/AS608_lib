@@ -6,9 +6,9 @@ physical sensor. Historical hardware validation: two AS608_QCCF modules on
 STM32F103C8T6, USART1/USART2, 57,600 baud, 8N2; successful 768-byte template
 transfer. The unified non-blocking port still needs hardware validation.
 
-## Incremental API rebuild — active stage 44
+## Incremental API rebuild — active stage 45
 
-The five lifecycle APIs and thirty-nine command/job APIs covering thirty-one opcodes (BurnCode experimental) (0x13, 0x0F, 0x1D, 0x1F, 0x16, 0x01, 0x02, 0x03, 0x05, 0x04, 0x07, 0x08, 0x09, 0x06, 0x0C, 0x0D, 0x10, 0x11, 0x1B, 0x0A, 0x0B, 0x1C, 0x0E, 0x17, 0x12, 0x14, 0x15, 0x18, 0x19, 0x1E, 0x1A)
+The five lifecycle APIs and forty command/job APIs covering thirty-one opcodes (BurnCode experimental) (0x13, 0x0F, 0x1D, 0x1F, 0x16, 0x01, 0x02, 0x03, 0x05, 0x04, 0x07, 0x08, 0x09, 0x06, 0x0C, 0x0D, 0x10, 0x11, 0x1B, 0x0A, 0x0B, 0x1C, 0x0E, 0x17, 0x12, 0x14, 0x15, 0x18, 0x19, 0x1E, 0x1A)
 are currently compiled from as608.c. Process supports simple,
 system-parameter, 16-bit result, search and index-table ACK phases, plus the
 512-byte information-page, 512/768-byte template upload/download and 256-byte feature upload/download and exact-length image upload/download streams.
@@ -16,6 +16,10 @@ The composite read, write and two-scan enrollment APIs chain their commands unde
 Enrollment polls only for placement/removal, requires observed NO_FINGER before scan two,
 and stores the merged template from CharBuffer2 at the caller's explicit PageID.
 No duplicate detection, occupancy check or automatic flash retry is performed.
+Range identification chains GetImage, GenChar and ordinary Search under
+one deadline, using the requested buffer and range. No automatic finger
+polling or retry; a negative ACK terminates the attempt. Match output is
+committed only after a validated in-range Search success ACK.
 All baseline APIs are restored; the obsolete commented reference is removed
 and remains available in Git history (commit 53425e4). Keep API sections in
 header order, with required static helpers above their first use and explicit
@@ -28,8 +32,8 @@ above its definition; follow this convention for newly added helpers.
 The packet layer is unchanged. API 39 adds an exact per-receive address
 to the transaction layer without weakening normal address validation.
 
-All 23 baseline APIs and APIs 24–44 are now implemented (BurnCode experimental). CI builds independent packet and
-transaction tests, API 01–44 dedicated tests, and full command/async/fault
+All 23 baseline APIs and APIs 24–45 are now implemented (BurnCode experimental). CI builds independent packet and
+transaction tests, API 01–45 dedicated tests, and full command/async/fault
 regressions. Additional planned APIs are declarations only. Target hardware
 validation and the DownChar final-ACK compatibility check remain outstanding.
 
@@ -124,6 +128,7 @@ AS608_lib/
 ├── test_as608_write_user_gpio.c Active API 42 GPIO echo tests
 ├── test_as608_burn_code.c       Active API 43 experimental burn tests
 ├── test_as608_enroll_two_scan.c Active API 44 enrollment FSM tests
+├── test_as608_identify_range.c  Active API 45 identification FSM tests
 ├── test_as608_transaction.c      Independent transport tests
 ├── test_as608_packet.c           Packet tests
 ├── test_as608_commands.c         Full command and template regression tests

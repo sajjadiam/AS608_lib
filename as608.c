@@ -85,7 +85,9 @@ enum as608_step {
     STEP_ENROLL_MERGE_ACK,
     STEP_ENROLL_STORE_ACK,
     STEP_ENROLL_WAIT_ARM,
-    STEP_ENROLL_WAIT
+    STEP_ENROLL_WAIT,
+    STEP_IDENTIFY_CAPTURE_ACK,
+    STEP_IDENTIFY_GEN_ACK
 };
 
 /* =========================================================================
@@ -770,15 +772,22 @@ static as608_progress_t accept_match_ack(as608_t *ctx) {
     return finish(ctx, AS608_ACK_OK);
 }
 
+/* Encode a range-search command shared by standalone and composite jobs. */
+static command_t search_command(const as608_search_t *search, uint8_t code) {
+    command_t command = {{code, (uint8_t)search->buffer}, 6U, STEP_SEARCH_ACK};
+    store_u16(command.bytes + 2U, search->start_page);
+    store_u16(command.bytes + 4U, search->page_count);
+
+    return command;
+}
+
 /* Validate and launch a range search with the selected opcode. */
 static as608_status_t search_start(as608_t *ctx, as608_search_t *search, uint8_t code) {
     if (!search || !valid_buffer(search->buffer) || !valid_range(search->start_page, search->page_count)) {
         return AS608_STATUS_INVALID_ARG;
     }
 
-    command_t command = {{code, (uint8_t)search->buffer}, 6U, STEP_SEARCH_ACK};
-    store_u16(command.bytes + 2U, search->start_page);
-    store_u16(command.bytes + 4U, search->page_count);
+    const command_t command = search_command(search, code);
 
     return reply_start(ctx, &command, search);
 }
@@ -1879,6 +1888,60 @@ as608_status_t as608_enroll_two_scan_start(as608_t *ctx, const as608_enroll_requ
  * ========================================================================= */
 
 /* =========================================================================
+ * API 45: as608_identify_range_start
+ * =========================================================================
+ * Host-managed GetImage, GenChar and Search under one deadline.
+ * AS60x MCU User's Guide V1.0, p. 38, workflow (e).
+ */
+
+/* Chain capture and feature extraction to the existing range-search ACK. */
+static as608_progress_t accept_identify_range_ack(as608_t *ctx) {
+    const as608_transaction_frame_t frame = as608_transaction_received(&ctx->transaction);
+
+    if ((frame.kind != AS608_PACKET_ACK) || (frame.length != 1U)) {
+        return quarantine(ctx, AS608_STATUS_UNEXPECTED_REPLY);
+    }
+
+    if (frame.data[0] != AS608_ACK_OK) {
+        return finish(ctx, frame.data[0]);
+    }
+
+    const as608_search_t *search = ctx->reply_output;
+
+    if (!search || !valid_buffer(search->buffer) || !valid_range(search->start_page, search->page_count)) {
+        return quarantine(ctx, AS608_STATUS_UNEXPECTED_REPLY);
+    }
+
+    if (ctx->step == STEP_IDENTIFY_CAPTURE_ACK) {
+        const uint8_t bytes[] = {CMD_GEN_CHAR, (uint8_t)search->buffer};
+
+        return next_or_fault(ctx, command_start(ctx, bytes, sizeof(bytes), STEP_IDENTIFY_GEN_ACK));
+    }
+
+    if (ctx->step == STEP_IDENTIFY_GEN_ACK) {
+        const command_t command = search_command(search, CMD_SEARCH);
+
+        return next_or_fault(ctx, command_start(ctx, command.bytes, command.length, command.step));
+    }
+
+    return quarantine(ctx, AS608_STATUS_UNEXPECTED_REPLY);
+}
+
+as608_status_t as608_identify_range_start(as608_t *ctx, as608_search_t *search) {
+    if (!search || !valid_buffer(search->buffer) || !valid_range(search->start_page, search->page_count)) {
+        return AS608_STATUS_INVALID_ARG;
+    }
+
+    const command_t command = {{CMD_GET_IMAGE}, 1U, STEP_IDENTIFY_CAPTURE_ACK};
+
+    return reply_start(ctx, &command, search);
+}
+
+/* =========================================================================
+ * END API 45
+ * ========================================================================= */
+
+/* =========================================================================
  * API 02: as608_process
  * =========================================================================
  * Keep the process dispatcher after the active command API sections so
@@ -1937,6 +2000,8 @@ as608_progress_t as608_process(as608_t *ctx) {
         case STEP_ENROLL_GEN2_ACK:
         case STEP_ENROLL_MERGE_ACK:
         case STEP_ENROLL_STORE_ACK:
+        case STEP_IDENTIFY_CAPTURE_ACK:
+        case STEP_IDENTIFY_GEN_ACK:
         case STEP_INFO_ACK: {
             limit = 1U;
             break;
@@ -2031,6 +2096,10 @@ as608_progress_t as608_process(as608_t *ctx) {
                 case STEP_ENROLL_MERGE_ACK:
                 case STEP_ENROLL_STORE_ACK: {
                     return accept_enroll_ack(ctx);
+                }
+                case STEP_IDENTIFY_CAPTURE_ACK:
+                case STEP_IDENTIFY_GEN_ACK: {
+                    return accept_identify_range_ack(ctx);
                 }
                 case STEP_GPIO_ACK: {
                     return accept_gpio_ack(ctx);
