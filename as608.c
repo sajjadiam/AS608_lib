@@ -35,7 +35,8 @@ enum as608_command {
 };
 
 enum as608_register {
-    REG_BAUD_RATE = 0x04
+    REG_BAUD_RATE = 0x04,
+    REG_SECURITY_LEVEL = 0x05
 };
 
 enum as608_step {
@@ -1313,21 +1314,43 @@ as608_status_t as608_generate_binary_image_start(as608_t *ctx, as608_image_mode_
  * Restrict the multiplier to the AS608 module profile (1 through 12).
  */
 
+/* Launch a system-register write after caller-specific validation. */
+static as608_status_t write_reg_start(as608_t *ctx, enum as608_register reg, uint8_t value) {
+    const command_t command = {{CMD_WRITE_REG, (uint8_t)reg, value}, 3U, STEP_SIMPLE_ACK};
+
+    return launch(ctx, &command);
+}
+
 as608_status_t as608_set_baud_rate_start(as608_t *ctx, uint32_t baud_rate) {
     if ((baud_rate < UINT32_C(9600)) || (baud_rate > UINT32_C(115200)) ||
         ((baud_rate % UINT32_C(9600)) != 0U)) {
         return AS608_STATUS_INVALID_ARG;
     }
 
-    const command_t command = {{
-        CMD_WRITE_REG, REG_BAUD_RATE, (uint8_t)(baud_rate / UINT32_C(9600))
-    }, 3U, STEP_SIMPLE_ACK};
-
-    return launch(ctx, &command);
+    return write_reg_start(ctx, REG_BAUD_RATE, (uint8_t)(baud_rate / UINT32_C(9600)));
 }
 
 /* =========================================================================
  * END API 32
+ * ========================================================================= */
+
+/* =========================================================================
+ * API 33: as608_set_security_level_start
+ * =========================================================================
+ * PS_WriteReg (0x0E), AS60x Communication Manual V1.0, p. 19.
+ * Register 5 selects one of five sensor-side match threshold levels.
+ */
+
+as608_status_t as608_set_security_level_start(as608_t *ctx, as608_security_level_t level) {
+    if ((level < AS608_SECURITY_LEVEL_1) || (level > AS608_SECURITY_LEVEL_5)) {
+        return AS608_STATUS_INVALID_ARG;
+    }
+
+    return write_reg_start(ctx, REG_SECURITY_LEVEL, (uint8_t)level);
+}
+
+/* =========================================================================
+ * END API 33
  * ========================================================================= */
 
 /* =========================================================================

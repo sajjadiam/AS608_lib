@@ -6,9 +6,9 @@ physical sensor. Historical hardware validation: two AS608_QCCF modules on
 STM32F103C8T6, USART1/USART2, 57,600 baud, 8N2; successful 768-byte template
 transfer. The unified non-blocking port still needs hardware validation.
 
-## Incremental API rebuild — active stage 32
+## Incremental API rebuild — active stage 33
 
-The five lifecycle APIs and twenty-seven command/job APIs covering twenty-three opcodes (0x13, 0x0F, 0x1D, 0x1F, 0x16, 0x01, 0x02, 0x03, 0x05, 0x04, 0x07, 0x08, 0x09, 0x06, 0x0C, 0x0D, 0x10, 0x11, 0x1B, 0x0A, 0x0B, 0x1C, 0x0E)
+The five lifecycle APIs and twenty-eight command/job APIs covering twenty-three opcodes (0x13, 0x0F, 0x1D, 0x1F, 0x16, 0x01, 0x02, 0x03, 0x05, 0x04, 0x07, 0x08, 0x09, 0x06, 0x0C, 0x0D, 0x10, 0x11, 0x1B, 0x0A, 0x0B, 0x1C, 0x0E)
 are currently compiled from as608.c. Process supports simple,
 system-parameter, 16-bit result, search and index-table ACK phases, plus the
 512-byte information-page, 512/768-byte template upload/download and 256-byte feature upload/download and exact-length image upload/download streams.
@@ -24,8 +24,8 @@ Every active static function has a short English purpose comment immediately
 above its definition; follow this convention for newly added helpers.
 The packet and transaction layers are unchanged.
 
-All 23 baseline APIs and APIs 24–32 are now implemented. CI builds independent packet and
-transaction tests, API 01–32 dedicated tests, and full command/async/fault
+All 23 baseline APIs and APIs 24–33 are now implemented. CI builds independent packet and
+transaction tests, API 01–33 dedicated tests, and full command/async/fault
 regressions. Additional planned APIs are declarations only. Target hardware
 validation and the DownChar final-ACK compatibility check remain outstanding.
 
@@ -33,6 +33,8 @@ Baud-rate changes use PS_WriteReg register 4, with the AS608 profile
 9600..115200 bps in 9600-bps increments. Receive the ACK at the old rate;
 the application owns UART synchronization at the new rate and readback.
 Do not retry automatically after an uncertain register update.
+Security-level changes use register 5 with levels 1 through 5; the
+sensor owns its matching threshold. ACK_OK does not establish readback.
 
 ## Flat project structure
 
@@ -76,6 +78,7 @@ AS608_lib/
 ├── test_as608_download_image.c  Active API 30 image download tests
 ├── test_as608_generate_binary_image.c Active API 31 image processing tests
 ├── test_as608_set_baud_rate.c    Active API 32 baud register tests
+├── test_as608_set_security_level.c Active API 33 security register tests
 ├── test_as608_transaction.c      Independent transport tests
 ├── test_as608_packet.c           Packet tests
 ├── test_as608_commands.c         Full command and template regression tests

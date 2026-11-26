@@ -107,6 +107,15 @@ typedef enum {
     AS608_IMAGE_THINNED_WITH_MINUTIAE = 2
 } as608_image_mode_t;
 
+/** Security levels for PS_WriteReg, register 5. */
+typedef enum {
+    AS608_SECURITY_LEVEL_1 = 1,
+    AS608_SECURITY_LEVEL_2 = 2,
+    AS608_SECURITY_LEVEL_3 = 3,
+    AS608_SECURITY_LEVEL_4 = 4,
+    AS608_SECURITY_LEVEL_5 = 5
+} as608_security_level_t;
+
 /** @brief Decoded 16-byte response to PS_ReadSysPara (0x0F). */
 typedef struct {
     uint16_t status_register;    /**< System status flags. */
@@ -282,7 +291,7 @@ as608_status_t as608_init(as608_t *ctx, const as608_config_t *config);
  * @post A valid terminal ACK sets DONE and stores its raw confirmation
  * code. A transport/protocol fault during BUSY sets DESYNCHRONIZED and
  * records the host error; a non-BUSY context is left unchanged.
- * @note At rebuild stage 32, simple, system-parameter, 16-bit result,
+ * @note At rebuild stage 33, simple, system-parameter, 16-bit result,
  * index-table and search ACK phases plus information-page, template,
  * feature and image upload streaming are active. Template, feature and
  * image download streaming is also supported.
@@ -1310,6 +1319,37 @@ as608_status_t as608_generate_binary_image_start(as608_t *ctx, as608_image_mode_
  */
 as608_status_t as608_set_baud_rate_start(as608_t *ctx, uint32_t baud_rate);
 
+/**
+ * @brief Start changing the fingerprint security level (PS_WriteReg, 0x0E).
+ *
+ * @details Register 5 selects the sensor-side matching threshold.
+ * Levels 1 through 5 are ordered from lowest to highest security.
+ * The generic AS60x manual lists level 3 as the reset value. The
+ * threshold values and actual FAR/FRR depend on sensor firmware.
+ *
+ * @param[in,out] ctx Initialized caller-owned device context.
+ * @param[in] level One of AS608_SECURITY_LEVEL_1 through _5.
+ * @retval AS608_STATUS_OK Job admitted; register update not yet confirmed.
+ * @retval AS608_STATUS_INVALID_ARG Null context or unsupported level.
+ * @retval AS608_STATUS_NOT_INITIALIZED Context is not initialized.
+ * @retval AS608_STATUS_BUSY Another job owns the context.
+ * @retval AS608_STATUS_RECOVERY_REQUIRED Link is quarantined.
+ * @pre Serialize calls on ctx and verify firmware support.
+ * @post A validated terminal ACK is exposed through as608_get_result().
+ * The driver changes no host-side matching threshold or UART setting.
+ * @warning The manual describes ACK before configuration update and flash
+ * persistence. ACK_OK is not verified readback. After timeout, abort or
+ * communication fault, the actual level may be unknown. No auto-retry.
+ * @note Check both result fields. Allow target-specific settling time,
+ * then read system parameters to verify the level if required.
+ * @see as608_read_parameters_start
+ * @see as608_process
+ * @see as608_get_result
+ * @see AS60x Communication Manual V1.0, printed page 19.
+ * @see AS60x MCU User's Guide V1.0, printed pages 5 and 21–22.
+ */
+as608_status_t as608_set_security_level_start(as608_t *ctx, as608_security_level_t level);
+
 /* -------------------------------------------------------------------------
  * Planned API contracts (declarations only; NOT implemented or linkable).
  *
@@ -1335,15 +1375,6 @@ typedef enum {
     AS608_SENSOR_PASSWORD_VERIFIED = 0x04,
     AS608_SENSOR_IMAGE_VALID = 0x08
 } as608_sensor_status_flag_t;
-
-/** Security levels for PS_WriteReg, register 5. */
-typedef enum {
-    AS608_SECURITY_LEVEL_1 = 1,
-    AS608_SECURITY_LEVEL_2 = 2,
-    AS608_SECURITY_LEVEL_3 = 3,
-    AS608_SECURITY_LEVEL_4 = 4,
-    AS608_SECURITY_LEVEL_5 = 5
-} as608_security_level_t;
 
 /** Wire packet-size codes for PS_WriteReg, register 6. */
 typedef enum {
@@ -1415,10 +1446,6 @@ typedef struct {
 } as608_free_slot_t;
 
 /* ---- Configuration (PS_WriteReg 0x0E, typed register setters) ---- */
-
-/** Set register 5, level 1..5. */
-as608_status_t as608_set_security_level_start(as608_t *ctx,
-                                              as608_security_level_t level);
 
 /** Set register 6, code 0..3. */
 as608_status_t as608_set_packet_size_start(as608_t *ctx,
