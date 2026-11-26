@@ -8,7 +8,7 @@ transfer. The unified non-blocking port still needs hardware validation.
 
 ## Completed API rebuild — 46 APIs
 
-Post-rebuild maintenance: stage 52, transaction-header contract review.
+Post-rebuild maintenance: stage 53, transaction implementation hardening.
 
 The five lifecycle APIs and forty-one command/job APIs covering thirty-one opcodes (BurnCode experimental) (0x13, 0x0F, 0x1D, 0x1F, 0x16, 0x01, 0x02, 0x03, 0x05, 0x04, 0x07, 0x08, 0x09, 0x06, 0x0C, 0x0D, 0x10, 0x11, 0x1B, 0x0A, 0x0B, 0x1C, 0x0E, 0x17, 0x12, 0x14, 0x15, 0x18, 0x19, 0x1E, 0x1A)
 are currently compiled from as608.c. Process supports simple,
@@ -58,7 +58,13 @@ addresses. SENT denotes port acceptance, RECEIVED denotes a structurally
 validated frame, and DRAINED denotes physical TX completion; none alone
 implies sensor command success. Event numbers and context layout are unchanged.
 Independent C11/C++11 header checks and transport bounds/address tests
-exercise these contracts. Implementation hardening follows in stage 53.
+exercise these contracts. Stage 53 rejects invalid full-width TX kinds
+and active-phase replacement, checks full-width callback counts before
+narrowing, and guards TX/RX counters before subtraction or pointer arithmetic.
+Inconsistent RX metadata faults before UART I/O. Deadline precedence and
+callback budgets remain unchanged. Host tests inject invalid counters and
+oversized callback results; actual narrow-size_t target execution remains
+unverified.
 
 All 23 baseline APIs and APIs 24–46 are now implemented (BurnCode experimental). CI builds independent packet and
 transaction tests, API 01–46 dedicated tests, and full command/async/fault

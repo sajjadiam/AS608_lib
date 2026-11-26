@@ -270,7 +270,7 @@ static void test_port_queue(void) {
 
 /* Verify all UART phases reject negative or overreported callback results. */
 static void test_port_faults(void) {
-    const int32_t faults[] = {INT32_MIN, -1, INT32_MAX};
+    const int32_t faults[] = {INT32_MIN, -1, 268, 65536, 65537, 131073, INT32_MAX};
     const uint8_t payload = 1U;
     const as608_transaction_frame_t frame = {AS608_PACKET_COMMAND, &payload, 1U};
     for (size_t i = 0U; i < sizeof(faults) / sizeof(faults[0]); ++i) {
@@ -423,6 +423,116 @@ static void test_send_bounds(void) {
     assert(mock.tx_length == 11U && mock.tx[8] == 2U && mock.tx[10] == 10U);
 }
 
+/* Reject invalid full-width kinds and active-phase replacement atomically. */
+static void test_send_admission(void) {
+    mock_t mock = {0};
+    as608_transaction_t txn;
+    setup(&txn, &mock);
+    const uint8_t data = 0x42U;
+    as608_transaction_frame_t frame = {AS608_PACKET_COMMAND, &data, 1U};
+    unsigned char saved[sizeof(txn)];
+    (void)memcpy(saved, &txn, sizeof(saved));
+    assert(as608_transaction_send(NULL, &frame) == AS608_STATUS_INVALID_ARG);
+    assert(as608_transaction_send(&txn, NULL) == AS608_STATUS_INVALID_ARG);
+    /* Wide invalid values whose low byte would otherwise be valid.
+     * With short enums, such a value is already truncated by the caller;
+     * test only values representable by the enum's actual storage. */
+    const unsigned int invalid[] = {0U, 3U, 7U, 9U, 255U, 257U, 258U, 264U, 65537U};
+    for (size_t i = 0U; i < sizeof(invalid) / sizeof(invalid[0]); ++i) {
+        frame.kind = (as608_packet_kind_t)invalid[i];
+        if ((unsigned int)frame.kind != invalid[i]) {
+            continue;
+        }
+        assert(as608_transaction_send(&txn, &frame) == AS608_STATUS_INVALID_ARG);
+        assert(memcmp(saved, &txn, sizeof(saved)) == 0);
+    }
+
+    frame.kind = AS608_PACKET_COMMAND;
+    assert(as608_transaction_send(&txn, &frame) == AS608_STATUS_OK);
+    (void)memcpy(saved, &txn, sizeof(saved));
+    assert(as608_transaction_send(&txn, &frame) == AS608_STATUS_BUSY);
+    assert(memcmp(saved, &txn, sizeof(saved)) == 0);
+    assert(mock.calls == 0U && mock.clock_calls == 1U);
+    assert(run(&txn, &mock).event == AS608_TXN_SENT);
+}
+
+/* Inject inconsistent internal counters before any buffer access. */
+static void test_counter_faults(void) {
+    const uint8_t data = 0x42U;
+    const as608_transaction_frame_t frame = {AS608_PACKET_COMMAND, &data, 1U};
+
+    for (unsigned int fault_id = 0U; fault_id < 15U; ++fault_id) {
+        mock_t mock = {.burst = 9U};
+        as608_transaction_t txn;
+        setup(&txn, &mock);
+
+        if (fault_id < 4U) {
+            assert(as608_transaction_send(&txn, &frame) == AS608_STATUS_OK);
+            switch (fault_id) {
+                case 0U: txn.tx_len = 10U; break;
+                case 1U: txn.tx_len = SIZE_MAX; break;
+                case 2U: txn.tx_pos = txn.tx_len; break;
+                default: txn.tx_pos = SIZE_MAX; break;
+            }
+        } else if (fault_id < 6U) {
+            as608_transaction_receive(&txn, 1U);
+            txn.rx_header_pos = fault_id == 4U ? sizeof(txn.rx_header) : SIZE_MAX;
+        } else {
+            prepare_rx(&mock);
+            as608_transaction_receive(&txn, 1U);
+            assert(step(&txn, &mock).event == AS608_TXN_PENDING);
+            assert(mock.rx_offset == sizeof(txn.rx_header));
+            switch (fault_id) {
+                case 6U: txn.rx_body_len = 0U; break;
+                case 7U: txn.rx_body_len = SIZE_MAX; break;
+                case 8U: txn.rx_body_pos = txn.rx_body_len; break;
+                case 9U: txn.rx_body_pos = SIZE_MAX; break;
+                case 10U: txn.rx_payload_len = SIZE_MAX; break;
+                case 11U: txn.rx_payload_len = 2U; break;
+                case 12U: txn.rx_limit = 0U; break;
+                case 13U: txn.rx_kind = AS608_PACKET_COMMAND; break;
+                default: txn.rx_body_len = 2U; break;
+            }
+        }
+
+        const size_t calls = mock.calls;
+        const size_t tx_length = mock.tx_length;
+        const size_t rx_offset = mock.rx_offset;
+        const as608_transaction_result_t result = step(&txn, &mock);
+        assert(result.event == AS608_TXN_FAULT &&
+               result.status == AS608_STATUS_UNEXPECTED_REPLY);
+        assert(mock.calls == calls && mock.tx_length == tx_length &&
+               mock.rx_offset == rx_offset);
+    }
+}
+
+/* Verify deadline precedence in all four active transport phases. */
+static void test_deadline_precedence(void) {
+    const uint8_t data = 0x42U;
+    const as608_transaction_frame_t frame = {AS608_PACKET_COMMAND, &data, 1U};
+    for (unsigned int phase = 0U; phase < 4U; ++phase) {
+        mock_t mock = {.burst = 9U, .now = UINT32_MAX - 49U};
+        as608_transaction_t txn;
+        setup(&txn, &mock);
+        if (phase == 0U) {
+            assert(as608_transaction_send(&txn, &frame) == AS608_STATUS_OK);
+        } else if (phase == 3U) {
+            as608_transaction_drain(&txn);
+        } else {
+            prepare_rx(&mock);
+            as608_transaction_receive(&txn, 1U);
+            if (phase == 2U) {
+                assert(step(&txn, &mock).event == AS608_TXN_PENDING);
+            }
+        }
+        mock.now = 50U;
+        const size_t calls = mock.calls;
+        const as608_transaction_result_t result = step(&txn, &mock);
+        assert(result.event == AS608_TXN_FAULT && result.status == AS608_STATUS_TIMEOUT);
+        assert(mock.calls == calls);
+    }
+}
+
 int main(void)
 {
     test_config_validation();
@@ -434,6 +544,9 @@ int main(void)
     test_receive_address();
     test_receive_bounds();
     test_send_bounds();
+    test_send_admission();
+    test_counter_faults();
+    test_deadline_precedence();
     puts("as608 transaction tests: PASS");
     return 0;
 }

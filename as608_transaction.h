@@ -140,11 +140,12 @@ void as608_transaction_begin(as608_transaction_t *txn);
  * @param[in] frame Readable descriptor with a valid packet kind.
  * Nonzero length requires readable data of that extent; zero permits NULL.
  * @retval AS608_STATUS_OK Frame prepared; no UART callback invoked.
- * @retval AS608_STATUS_INVALID_ARG Invalid payload size, missing nonempty
- * payload or unsupported encoded packet kind.
- * @pre Pointers valid; frame and payload do not overlap TX storage or
- * fields modified during preparation. Caller chooses valid TX direction
- * and semantic lengths. No earlier transport phase is active.
+ * @retval AS608_STATUS_INVALID_ARG Null pointer, invalid payload size,
+ * missing nonempty payload or kind other than COMMAND/DATA/END_DATA.
+ * @retval AS608_STATUS_BUSY An earlier transport phase is active.
+ * @pre Non-null pointers valid; frame and payload do not overlap TX storage
+ * or fields modified during preparation. Caller chooses semantic lengths.
+ * @note Rejected preparation preserves context and invokes no callbacks.
  * @post On success the complete frame is copied, TX phase armed, and
  * the input storage may be reused. The original deadline is unchanged.
  * @note The actual UART transmission occurs in process calls.
@@ -194,6 +195,9 @@ void as608_transaction_drain(as608_transaction_t *txn);
  * at most one port I/O callback. RX validates start, exact address,
  * kind (ACK/DATA/END_DATA), storage bound, caller limit and checksum.
  * Command-specific ACK meanings and lengths are not checked here.
+ * Invalid phase counters or inconsistent RX metadata produce FAULT with
+ * UNEXPECTED_REPLY before pointer arithmetic or UART I/O. Callback
+ * counts are checked at full width before conversion to size_t.
  * @post Non-PENDING events leave the wire phase idle. The caller must
  * schedule the next phase or finish; FAULT requires quarantine.
  * @warning No retry, byte skipping, flush or resynchronization. The
