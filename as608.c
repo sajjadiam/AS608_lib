@@ -21,6 +21,7 @@ enum as608_command {
     CMD_DELETE_CHAR = 0x0C,
     CMD_EMPTY = 0x0D,
     CMD_READ_PARAMS = 0x0F,
+    CMD_ENROLL = 0x10,
     CMD_VERIFY_PASSWORD = 0x13,
     CMD_READ_INFO = 0x16,
     CMD_COUNT = 0x1D,
@@ -1001,6 +1002,23 @@ as608_status_t as608_empty_database_start(as608_t *ctx) {
 
 /* =========================================================================
  * END API 23
+ * ========================================================================= */
+
+/* =========================================================================
+ * API 24: as608_enroll_start
+ * =========================================================================
+ * PS_Enroll (0x10), AS60x Communication Manual V1.0, pp. 20–21.
+ * Automatic enrollment; successful ACK returns the selected flash PageID.
+ */
+
+as608_status_t as608_enroll_start(as608_t *ctx, uint16_t *page_id) {
+    const command_t command = {{CMD_ENROLL}, 1U, STEP_U16_ACK};
+
+    return reply_start(ctx, &command, page_id);
+}
+
+/* =========================================================================
+ * END API 24
  * ========================================================================= */
 
 /* =========================================================================

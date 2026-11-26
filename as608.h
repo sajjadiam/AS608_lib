@@ -234,7 +234,7 @@ as608_status_t as608_init(as608_t *ctx, const as608_config_t *config);
  * @post A valid terminal ACK sets DONE and stores its raw confirmation
  * code. A transport/protocol fault during BUSY sets DESYNCHRONIZED and
  * records the host error; a non-BUSY context is left unchanged.
- * @note At rebuild stage 23, simple, system-parameter, 16-bit result,
+ * @note At rebuild stage 24, simple, system-parameter, 16-bit result,
  * index-table and search ACK phases plus information-page and template
  * upload/download streaming are active.
  * @see as608_get_result
@@ -955,6 +955,37 @@ as608_status_t as608_delete_templates_start(as608_t *ctx, uint16_t start_page, u
  */
 as608_status_t as608_empty_database_start(as608_t *ctx);
 
+/**
+ * @brief Start sensor-managed single-scan enrollment (opcode 0x10).
+ *
+ * @details PS_Enroll takes no command arguments. The sensor captures a
+ * fingerprint, selects a free database slot and stores the template in
+ * flash. A successful ACK contains a confirmation byte and a 16-bit
+ * big-endian PageID. This is not the host-managed two-scan workflow.
+ *
+ * @param[in,out] ctx Initialized caller-owned device context.
+ * @param[out] page_id Writable caller-owned uint16_t result.
+ * @retval AS608_STATUS_OK Job admitted; PageID is not yet available.
+ * @retval AS608_STATUS_INVALID_ARG Null context or output.
+ * @retval AS608_STATUS_NOT_INITIALIZED Context is not initialized.
+ * @retval AS608_STATUS_BUSY Another job owns the context.
+ * @retval AS608_STATUS_RECOVERY_REQUIRED Link is quarantined.
+ * @pre Serialize calls on ctx. Keep page_id valid and separate from
+ * driver storage until the job terminates or is aborted.
+ * @post PageID is written only after a checksum-verified ACK_OK with
+ * a 3-byte payload. On rejection, negative ACK, timeout, protocol error
+ * or abort, page_id remains unchanged.
+ * @warning Enrollment writes flash. Timeout, abort or communication
+ * failure may leave an enrolled template at an unknown PageID.
+ * No automatic retry or rollback is performed.
+ * @note Firmware support must be verified on the target. Poll
+ * as608_process() and check both result fields before using PageID.
+ * @see as608_process
+ * @see as608_get_result
+ * @see AS60x Communication Manual V1.0, printed pages 20–21.
+ */
+as608_status_t as608_enroll_start(as608_t *ctx, uint16_t *page_id);
+
 /* -------------------------------------------------------------------------
  * Planned API contracts (declarations only; NOT implemented or linkable).
  *
@@ -1103,9 +1134,6 @@ typedef struct {
 } as608_free_slot_t;
 
 /* ---- Fingerprint recognition ---- */
-
-/** PS_Enroll (0x10): firmware-managed enrollment; may write flash. */
-as608_status_t as608_enroll_start(as608_t *ctx, uint16_t *page_id);
 
 /** PS_Identify (0x11): firmware-managed acquisition/search.
  * @warning Manual describes possible updates of incomplete templates.
