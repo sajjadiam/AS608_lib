@@ -33,6 +33,7 @@ enum as608_command {
     CMD_READ_INFO = 0x16,
     CMD_PORT_CONTROL = 0x17,
     CMD_WRITE_NOTEPAD = 0x18,
+    CMD_READ_NOTEPAD = 0x19,
     CMD_HIGH_SPEED_SEARCH = 0x1B,
     CMD_GEN_BIN_IMAGE = 0x1C,
     CMD_COUNT = 0x1D,
@@ -58,7 +59,7 @@ enum as608_step {
     STEP_READ_PARAMS_ACK,
     STEP_U16_ACK,
     STEP_SEARCH_ACK,
-    STEP_INDEX_ACK,
+    STEP_BYTES32_ACK,
     STEP_DOWN_DRAIN,
     STEP_IDENTIFY_ACK,
     STEP_FEATURE_ACK,
@@ -435,8 +436,8 @@ as608_status_t as608_get_template_count_start(as608_t *ctx, uint16_t *count) {
  * Firmware support is not guaranteed; the manual marks this command reserved.
  */
 
-/* Validate the index ACK and copy its 32-byte bitmap on success. */
-static as608_progress_t accept_index_ack(as608_t *ctx) {
+/* Validate an ACK and copy its 32-byte result only on success. */
+static as608_progress_t accept_bytes32_ack(as608_t *ctx) {
     const as608_transaction_frame_t frame = as608_transaction_received(&ctx->transaction);
 
     if ((frame.kind != AS608_PACKET_ACK) || ((frame.length != 1U) && (frame.length != 33U))) {
@@ -460,7 +461,7 @@ as608_status_t as608_read_index_table_start(as608_t *ctx, uint8_t index_page, ui
         return AS608_STATUS_INVALID_ARG;
     }
 
-    const command_t command = {{CMD_READ_INDEX, index_page}, 2U, STEP_INDEX_ACK};
+    const command_t command = {{CMD_READ_INDEX, index_page}, 2U, STEP_BYTES32_ACK};
 
     return reply_start(ctx, &command, bitmap);
 }
@@ -1590,6 +1591,27 @@ as608_status_t as608_write_notepad_start(as608_t *ctx, const as608_notepad_page_
  * ========================================================================= */
 
 /* =========================================================================
+ * API 41: as608_read_notepad_start
+ * =========================================================================
+ * PS_ReadNotepad (0x19), AS60x MCU User's Guide V1.0, p. 29.
+ * Reads one 32-byte user-flash page using the shared fixed-size ACK.
+ */
+
+as608_status_t as608_read_notepad_start(as608_t *ctx, as608_notepad_page_t *page) {
+    if (!page || (page->page >= AS608_NOTEPAD_PAGE_COUNT)) {
+        return AS608_STATUS_INVALID_ARG;
+    }
+
+    const command_t command = {{CMD_READ_NOTEPAD, page->page}, 2U, STEP_BYTES32_ACK};
+
+    return reply_start(ctx, &command, page->data);
+}
+
+/* =========================================================================
+ * END API 41
+ * ========================================================================= */
+
+/* =========================================================================
  * API 02: as608_process
  * =========================================================================
  * Keep the process dispatcher after the active command API sections so
@@ -1648,7 +1670,7 @@ as608_progress_t as608_process(as608_t *ctx) {
             limit = 3U;
             break;
         }
-        case STEP_INDEX_ACK: {
+        case STEP_BYTES32_ACK: {
             limit = 33U;
             break;
         }
@@ -1722,8 +1744,8 @@ as608_progress_t as608_process(as608_t *ctx) {
                 case STEP_ADDRESS_ACK: {
                     return accept_address_ack(ctx);
                 }
-                case STEP_INDEX_ACK: {
-                    return accept_index_ack(ctx);
+                case STEP_BYTES32_ACK: {
+                    return accept_bytes32_ack(ctx);
                 }
                 case STEP_SEARCH_ACK:
                 case STEP_IDENTIFY_ACK: {

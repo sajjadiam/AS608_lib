@@ -322,8 +322,8 @@ as608_status_t as608_init(as608_t *ctx, const as608_config_t *config);
  * @post A valid terminal ACK sets DONE and stores its raw confirmation
  * code. A transport/protocol fault during BUSY sets DESYNCHRONIZED and
  * records the host error; a non-BUSY context is left unchanged.
- * @note At rebuild stage 40, simple, system-parameter, 16/32-bit result,
- * index-table and search ACK phases plus information-page, template,
+ * @note At rebuild stage 41, simple, system-parameter, 16/32-bit result,
+ * 32-byte index/notepad and search ACK phases plus information-page, template,
  * feature and image upload streaming are active. Template, feature and
  * image download streaming is also supported.
  * @see as608_get_result
@@ -1614,6 +1614,36 @@ as608_status_t as608_set_device_address_start(as608_t *ctx, uint32_t address);
  */
 as608_status_t as608_write_notepad_start(as608_t *ctx, const as608_notepad_page_t *page);
 
+/**
+ * @brief Start reading one 32-byte user-flash notepad page (opcode 0x19).
+ *
+ * @details Sends page index 0..15. The command table specifies a
+ * confirmation followed by 32 data bytes on success, despite conflicting
+ * prose about the input and size. No flash write is performed.
+ *
+ * @param[in,out] ctx Initialized caller-owned device context.
+ * @param[in,out] page Page index and writable 32-byte result.
+ * @retval AS608_STATUS_OK Job admitted; data not yet available.
+ * @retval AS608_STATUS_INVALID_ARG Null context or page, or page >= 16.
+ * @retval AS608_STATUS_NOT_INITIALIZED Context is not initialized.
+ * @retval AS608_STATUS_BUSY Another job owns the context.
+ * @retval AS608_STATUS_RECOVERY_REQUIRED Link is quarantined.
+ * @pre Serialize calls on ctx. Keep page valid and separate from driver
+ * storage, and its index unchanged, through completion or abort.
+ * Verify target capacity and firmware support.
+ * @post Only a checksum-verified ACK_OK with exactly 33 payload bytes
+ * changes page->data. The page index is never modified. Negative ACK
+ * (one or 33 bytes), admission rejection, fault or abort leaves data
+ * unchanged. Data is raw bytes, not a NUL-terminated string.
+ * @note Check both result fields before using the data. A separate
+ * read after WriteNotepad can verify the contents, not power-loss safety.
+ * @see as608_write_notepad_start
+ * @see as608_process
+ * @see as608_get_result
+ * @see AS60x MCU User's Guide V1.0, printed page 29.
+ */
+as608_status_t as608_read_notepad_start(as608_t *ctx, as608_notepad_page_t *page);
+
 /* -------------------------------------------------------------------------
  * Planned API contracts (declarations only; NOT implemented or linkable).
  *
@@ -1679,11 +1709,7 @@ typedef struct {
     uint16_t page_id;
 } as608_free_slot_t;
 
-/* ---- User flash, GPIO and firmware maintenance ---- */
-
-/** PS_ReadNotepad (0x19): data committed on a successful ACK only. */
-as608_status_t as608_read_notepad_start(as608_t *ctx,
-                                        as608_notepad_page_t *page);
+/* ---- GPIO and firmware maintenance ---- */
 
 /** PS_UserGPIOCommand (0x1E): reserved/variant-specific. */
 as608_status_t as608_write_user_gpio_start(as608_t *ctx,
