@@ -16,6 +16,7 @@ enum as608_command {
     CMD_REG_MODEL = 0x05,
     CMD_LOAD_CHAR = 0x07,
     CMD_UP_CHAR = 0x08,
+    CMD_DOWN_CHAR = 0x09,
     CMD_READ_PARAMS = 0x0F,
     CMD_VERIFY_PASSWORD = 0x13,
     CMD_READ_INFO = 0x16,
@@ -36,7 +37,8 @@ enum as608_step {
     STEP_READ_PARAMS_ACK,
     STEP_U16_ACK,
     STEP_SEARCH_ACK,
-    STEP_INDEX_ACK
+    STEP_INDEX_ACK,
+    STEP_DOWN_DRAIN
 };
 
 /* =========================================================================
@@ -738,6 +740,139 @@ as608_status_t as608_upload_template_start(as608_t *ctx, as608_char_buffer_t buf
  * ========================================================================= */
 
 /* =========================================================================
+ * API 18: as608_download_template_start
+ * =========================================================================
+ * PS_DownChar (0x09), AS60x Communication Manual V1.0, pp. 16–17.
+ * ReadSysPara selects the fragment size before DownChar.
+ * Completion means physical TX drain after a positive readiness ACK,
+ * not verified final sensor acceptance (manual example, p. 31).
+ */
+
+typedef struct {
+    const uint8_t *data;
+    size_t length;
+    as608_char_buffer_t buffer;
+    bool store;
+    uint16_t page_id;
+} download_t;
+
+/* Admit a download and retain its source and optional store request. */
+static as608_status_t download_start(as608_t *ctx, const download_t *request) {
+    if (!request->data || !supported_size(request->length) || !valid_buffer(request->buffer)) {
+        return AS608_STATUS_INVALID_ARG;
+    }
+
+    const command_t command = {{CMD_READ_PARAMS}, 1U, STEP_PARAMS_ACK};
+    const as608_status_t status = launch(ctx, &command);
+
+    if (status == AS608_STATUS_OK) {
+        ctx->input = request->data;
+        ctx->input_length = request->length;
+        ctx->input_offset = 0U;
+        ctx->download_buffer = request->buffer;
+        ctx->store_after_download = request->store;
+        ctx->page_id = request->page_id;
+        ctx->chunk_size = 0U;
+    }
+
+    return status;
+}
+
+/* Convert a scheduling result to pending or a quarantined fault. */
+static as608_progress_t next_or_fault(as608_t *ctx, as608_status_t status) {
+    return (status == AS608_STATUS_OK) ? AS608_PENDING : quarantine(ctx, status);
+}
+
+/* Schedule one fragment, using END_DATA only for the last fragment. */
+static as608_status_t send_next_chunk(as608_t *ctx) {
+    if (!ctx->input || (ctx->input_offset >= ctx->input_length) ||
+        (ctx->chunk_size == 0U) || (ctx->chunk_size > AS608_TRANSACTION_MAX_PAYLOAD_BYTES)) {
+        return AS608_STATUS_UNEXPECTED_REPLY;
+    }
+
+    const size_t remaining = ctx->input_length - ctx->input_offset;
+    const size_t length = (remaining > ctx->chunk_size) ? ctx->chunk_size : remaining;
+    const as608_packet_kind_t kind = (length == remaining) ? AS608_PACKET_END_DATA : AS608_PACKET_DATA;
+    const as608_transaction_frame_t frame = {kind, ctx->input + ctx->input_offset, length};
+    const as608_status_t status = as608_transaction_send(&ctx->transaction, &frame);
+
+    if (status == AS608_STATUS_OK) {
+        ctx->input_offset += length;
+    }
+
+    return status;
+}
+
+/* Read the packet-size code and schedule DownChar. */
+static as608_progress_t accept_download_parameters(as608_t *ctx) {
+    const as608_transaction_frame_t frame = as608_transaction_received(&ctx->transaction);
+
+    if ((frame.kind != AS608_PACKET_ACK) || ((frame.length != 1U) && (frame.length != 17U))) {
+        return quarantine(ctx, AS608_STATUS_UNEXPECTED_REPLY);
+    }
+
+    if (frame.data[0] != AS608_ACK_OK) {
+        return finish(ctx, frame.data[0]);
+    }
+
+    if (frame.length != 17U) {
+        return quarantine(ctx, AS608_STATUS_UNEXPECTED_REPLY);
+    }
+
+    const uint16_t code = load_u16(frame.data + 13U);
+
+    if (code > 3U) {
+        return quarantine(ctx, AS608_STATUS_UNEXPECTED_REPLY);
+    }
+
+    ctx->chunk_size = (uint16_t)(32U << code);
+    const command_t command = {{CMD_DOWN_CHAR, (uint8_t)ctx->download_buffer}, 2U, STEP_DOWN_ACK};
+
+    return next_or_fault(ctx, command_start(ctx, &command));
+}
+
+/* Start sending fragments only after a valid readiness ACK. */
+static as608_progress_t accept_download_ack(as608_t *ctx) {
+    const as608_transaction_frame_t frame = as608_transaction_received(&ctx->transaction);
+
+    if ((frame.kind != AS608_PACKET_ACK) || (frame.length != 1U)) {
+        return quarantine(ctx, AS608_STATUS_UNEXPECTED_REPLY);
+    }
+
+    if (frame.data[0] != AS608_ACK_OK) {
+        return finish(ctx, frame.data[0]);
+    }
+
+    ctx->step = STEP_DOWN_DATA;
+    return next_or_fault(ctx, send_next_chunk(ctx));
+}
+
+/* Schedule the next fragment or wait for physical UART transmission. */
+static as608_progress_t download_sent(as608_t *ctx) {
+    if (ctx->input_offset < ctx->input_length) {
+        return next_or_fault(ctx, send_next_chunk(ctx));
+    }
+
+    if (ctx->input_offset != ctx->input_length) {
+        return quarantine(ctx, AS608_STATUS_UNEXPECTED_REPLY);
+    }
+
+    ctx->step = STEP_DOWN_DRAIN;
+    as608_transaction_drain(&ctx->transaction);
+    return AS608_PENDING;
+}
+
+as608_status_t as608_download_template_start(as608_t *ctx, as608_char_buffer_t buffer, const uint8_t *data, size_t length) {
+    const download_t request = {data, length, buffer, false, 0U};
+
+    return download_start(ctx, &request);
+}
+
+/* =========================================================================
+ * END API 18
+ * ========================================================================= */
+
+/* =========================================================================
  * API 02: as608_process
  * =========================================================================
  * Keep the process dispatcher after the active command API sections so
@@ -773,11 +908,13 @@ as608_progress_t as608_process(as608_t *ctx) {
     switch (ctx->step) {
         case STEP_SIMPLE_ACK:
         case STEP_UP_ACK:
+        case STEP_DOWN_ACK:
         case STEP_INFO_ACK: {
             limit = 1U;
             break;
         }
-        case STEP_READ_PARAMS_ACK: {
+        case STEP_READ_PARAMS_ACK:
+        case STEP_PARAMS_ACK: {
             limit = 17U;
             break;
         }
@@ -794,8 +931,10 @@ as608_progress_t as608_process(as608_t *ctx) {
             break;
         }
         case STEP_UP_DATA:
-        case STEP_INFO_DATA: {
-            limit = 0U; /* Receive is armed by the preceding ACK or DATA handler. */
+        case STEP_INFO_DATA:
+        case STEP_DOWN_DATA:
+        case STEP_DOWN_DRAIN: {
+            limit = 0U; /* Stream handlers schedule their own transport phases. */
             break;
         }
         default: {
@@ -811,7 +950,11 @@ as608_progress_t as608_process(as608_t *ctx) {
         }
 
         case AS608_TXN_SENT: {
-            if ((ctx->step == STEP_INFO_DATA) || (ctx->step == STEP_UP_DATA)) {
+            if (ctx->step == STEP_DOWN_DATA) {
+                return download_sent(ctx);
+            }
+
+            if ((ctx->step == STEP_INFO_DATA) || (ctx->step == STEP_UP_DATA) || (ctx->step == STEP_DOWN_DRAIN)) {
                 return quarantine(ctx, AS608_STATUS_UNEXPECTED_REPLY);
             }
 
@@ -826,6 +969,12 @@ as608_progress_t as608_process(as608_t *ctx) {
                 }
                 case STEP_READ_PARAMS_ACK: {
                     return accept_parameters_ack(ctx);
+                }
+                case STEP_PARAMS_ACK: {
+                    return accept_download_parameters(ctx);
+                }
+                case STEP_DOWN_ACK: {
+                    return accept_download_ack(ctx);
                 }
                 case STEP_U16_ACK: {
                     return accept_u16_ack(ctx);
@@ -850,6 +999,15 @@ as608_progress_t as608_process(as608_t *ctx) {
                     return quarantine(ctx, AS608_STATUS_UNEXPECTED_REPLY);
                 }
             }
+        }
+
+        case AS608_TXN_DRAINED: {
+            if ((ctx->step != STEP_DOWN_DRAIN) || (ctx->input_offset != ctx->input_length)) {
+                return quarantine(ctx, AS608_STATUS_UNEXPECTED_REPLY);
+            }
+
+            /* Preserve the readiness ACK; no final ACK was read. */
+            return finish(ctx, AS608_ACK_OK);
         }
 
         case AS608_TXN_FAULT: {
@@ -878,7 +1036,6 @@ as608_progress_t as608_process(as608_t *ctx) {
 
 // Remaining command opcodes; migrate into enum as608_command when needed.
 //     CMD_STORE_CHAR = 0x06,
-//     CMD_DOWN_CHAR = 0x09,
 //     CMD_DELETE_CHAR = 0x0C, CMD_EMPTY = 0x0D,
 // 
 // as608_status_t as608_store_template_start(as608_t *ctx, as608_char_buffer_t buffer,
@@ -895,38 +1052,6 @@ as608_progress_t as608_process(as608_t *ctx) {
 //     command_t command = page_command(CMD_LOAD_CHAR, AS608_CHAR_BUFFER_1, page_id);
 //     command.step = STEP_LOAD_ACK;
 //     return upload_start(ctx, &command, output);
-// }
-// 
-// typedef struct {
-//     const uint8_t *data;
-//     size_t length;
-//     as608_char_buffer_t buffer;
-//     bool store;
-//     uint16_t page_id;
-// } download_t;
-// 
-// static as608_status_t download_start(as608_t *ctx, const download_t *request)
-// {
-//     if (request->data == NULL || !supported_size(request->length) ||
-//         !valid_buffer(request->buffer)) return AS608_STATUS_INVALID_ARG;
-//     const command_t command = {{CMD_READ_PARAMS}, 1U, STEP_PARAMS_ACK};
-//     const as608_status_t status = launch(ctx, &command);
-//     if (status == AS608_STATUS_OK) {
-//         ctx->input = request->data;
-//         ctx->input_length = request->length;
-//         ctx->input_offset = 0U;
-//         ctx->download_buffer = request->buffer;
-//         ctx->store_after_download = request->store;
-//         ctx->page_id = request->page_id;
-//     }
-//     return status;
-// }
-// 
-// as608_status_t as608_download_template_start(as608_t *ctx, as608_char_buffer_t buffer,
-//                                            const uint8_t *data, size_t length)
-// {
-//     const download_t request = {data, length, buffer, false, 0U};
-//     return download_start(ctx, &request);
 // }
 // 
 // as608_status_t as608_write_template_start(as608_t *ctx, uint16_t page_id,
@@ -949,36 +1074,6 @@ as608_progress_t as608_process(as608_t *ctx) {
 // as608_status_t as608_empty_database_start(as608_t *ctx)
 // {
 //     return simple_start(ctx, CMD_EMPTY);
-// }
-// 
-// /* The port owns the queued TX bytes after accepting them. */
-// static as608_status_t send_next_chunk(as608_t *ctx)
-// {
-//     size_t length = ctx->input_length - ctx->input_offset;
-//     if (length > ctx->chunk_size) length = ctx->chunk_size;
-//     const as608_packet_kind_t kind =
-//         ctx->input_offset + length == ctx->input_length ?
-//         AS608_PACKET_END_DATA : AS608_PACKET_DATA;
-//     const as608_transaction_frame_t frame = {kind, ctx->input + ctx->input_offset, length};
-//     const as608_status_t status = as608_transaction_send(&ctx->transaction, &frame);
-//     if (status == AS608_STATUS_OK) ctx->input_offset += length;
-//     return status;
-// }
-// 
-// static as608_status_t sent_frame(as608_t *ctx)
-// {
-//     if (ctx->step != STEP_DOWN_DATA) {
-//         as608_transaction_receive(&ctx->transaction, AS608_TRANSACTION_MAX_PAYLOAD_BYTES);
-//         return AS608_STATUS_OK;
-//     }
-//     if (ctx->input_offset < ctx->input_length) return send_next_chunk(ctx);
-//     as608_transaction_drain(&ctx->transaction);
-//     return AS608_STATUS_OK;
-// }
-// 
-// static as608_progress_t next_or_fault(as608_t *ctx, as608_status_t status)
-// {
-//     return status == AS608_STATUS_OK ? AS608_PENDING : quarantine(ctx, status);
 // }
 // 
 // static bool is_stream(const as608_t *ctx)
@@ -1004,16 +1099,6 @@ as608_progress_t as608_process(as608_t *ctx) {
 //     if (frame->kind != AS608_PACKET_ACK || frame->length == 0U) return false;
 //     return frame->length == expected_ack(ctx) ||
 //            (frame->data[0] != AS608_ACK_OK && frame->length == 1U);
-// }
-// 
-// static as608_status_t begin_download(as608_t *ctx, const as608_transaction_frame_t *frame)
-// {
-//     const uint16_t code = load_u16(frame->data + 13U);
-//     if (code > 3U) return AS608_STATUS_UNEXPECTED_REPLY;
-//     ctx->chunk_size = (uint16_t)(32U << code);
-//     const command_t command = {{CMD_DOWN_CHAR, (uint8_t)ctx->download_buffer},
-//                                 2U, STEP_DOWN_ACK};
-//     return command_start(ctx, &command);
 // }
 // 
 // static as608_progress_t accept_reply(as608_t *ctx, const as608_transaction_frame_t *frame)
@@ -1055,10 +1140,9 @@ as608_progress_t as608_process(as608_t *ctx) {
 //         as608_transaction_receive(&ctx->transaction, ctx->stream_capacity - ctx->stream_offset);
 //         return AS608_PENDING;
 //     case STEP_PARAMS_ACK:
-//         return next_or_fault(ctx, begin_download(ctx, frame));
+//         return accept_download_parameters(ctx);
 //     case STEP_DOWN_ACK:
-//         ctx->step = STEP_DOWN_DATA;
-//         return next_or_fault(ctx, send_next_chunk(ctx));
+//         return accept_download_ack(ctx);
 //     default:
 //         return accept_reply(ctx, frame);
 //     }

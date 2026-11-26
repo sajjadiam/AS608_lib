@@ -29,10 +29,11 @@ This checklist tracks the host library against the Synochip AS60x Communication 
 - [x] API 15: `as608_search_start()` — PS_Search (0x04), validated search range, PageID and score, dedicated tests.
 - [x] API 16: `as608_load_template_start()` — PS_LoadChar (0x07), validated destination buffer and page-addressed command tests.
 - [x] API 17: `as608_upload_template_start()` — PS_UpChar (0x08), 512/768-byte template streaming and dedicated tests.
-- [ ] API 18: `as608_download_template_start()`.
+- [x] API 18: `as608_download_template_start()` — PS_DownChar (0x09), negotiated chunk size and physical TX drain; final ACK behavior requires firmware validation.
+- [ ] API 19: `as608_store_template_start()`.
 - [ ] Remaining command APIs, restored individually in header order.
 
-Active wire-command coverage: **12/31** (PS_VfyPwd 0x13, PS_ReadSysPara 0x0F, PS_ValidTempleteNum 0x1D, PS_ReadIndexTable 0x1F, PS_ReadINFpage 0x16, PS_GetImage 0x01, PS_GenChar 0x02, PS_Match 0x03, PS_RegModel 0x05, PS_Search 0x04, PS_LoadChar 0x07, PS_UpChar 0x08).
+Active wire-command coverage: **13/31** (PS_VfyPwd 0x13, PS_ReadSysPara 0x0F, PS_ValidTempleteNum 0x1D, PS_ReadIndexTable 0x1F, PS_ReadINFpage 0x16, PS_GetImage 0x01, PS_GenChar 0x02, PS_Match 0x03, PS_RegModel 0x05, PS_Search 0x04, PS_LoadChar 0x07, PS_UpChar 0x08, PS_DownChar 0x09).
 The 16/31 command coverage and checked items below describe the preserved
 pre-rebuild baseline (commit 53425e4), not current linkability except for
 APIs explicitly restored above.

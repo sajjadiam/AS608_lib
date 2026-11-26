@@ -234,9 +234,9 @@ as608_status_t as608_init(as608_t *ctx, const as608_config_t *config);
  * @post A valid terminal ACK sets DONE and stores its raw confirmation
  * code. A transport/protocol fault during BUSY sets DESYNCHRONIZED and
  * records the host error; a non-BUSY context is left unchanged.
- * @note At rebuild stage 17, simple, system-parameter, 16-bit result,
+ * @note At rebuild stage 18, simple, system-parameter, 16-bit result,
  * index-table and search ACK phases plus information-page and template
- * upload streaming are active.
+ * upload/download streaming are active.
  * @see as608_get_result
  * @see as608_confirm_reset
  */
@@ -730,12 +730,50 @@ as608_status_t as608_load_template_start(as608_t *ctx, as608_char_buffer_t buffe
  */
 as608_status_t as608_upload_template_start(as608_t *ctx, as608_char_buffer_t buffer, as608_template_buffer_t *output);
 
-/* Incremental rebuild: APIs 01–17 are defined.
+/**
+ * @brief Start downloading a template to a CharBuffer (PS_DownChar, 0x09).
+ *
+ * @details Reads system parameters (0x0F), validates the packet-size
+ * code (0 through 3: 32, 64, 128, 256 bytes), then sends DownChar.
+ * A verified readiness ACK_OK permits DATA and END_DATA transmission.
+ * One job deadline covers all phases and physical TX drain.
+ * Supports 512-byte documented and 768-byte observed templates.
+ * No automatic retry or flash store is performed.
+ *
+ * @param[in,out] ctx Initialized caller-owned device context.
+ * @param[in] buffer AS608_CHAR_BUFFER_1 or AS608_CHAR_BUFFER_2.
+ * @param[in] data Immutable caller-owned template bytes.
+ * @param[in] length Exactly 512 or 768 bytes.
+ * @retval AS608_STATUS_OK Job admitted, transfer not yet complete.
+ * @retval AS608_STATUS_INVALID_ARG Null context/data, invalid buffer
+ * ID or unsupported template length.
+ * @retval AS608_STATUS_NOT_INITIALIZED Context is not initialized.
+ * @retval AS608_STATUS_BUSY Another job owns the context.
+ * @retval AS608_STATUS_RECOVERY_REQUIRED Link is quarantined.
+ * @pre Serialize calls sharing ctx. Keep data valid, immutable and
+ * separate from driver storage through completion or abort.
+ * Verify the target firmware accepts the template format.
+ * @post State becomes BUSY on admission. Negative parameter or
+ * readiness ACK terminates without sending template data. Fault or
+ * abort can leave partial or uncertain sensor contents.
+ * @warning Success means a positive readiness ACK and physical UART
+ * drain (tx_idle), NOT verified acceptance of the full template.
+ * The command description (pp. 16–17) specifies a readiness ACK,
+ * but the example flow (p. 31) shows another ACK after END_DATA.
+ * This implementation retains the historical no-final-ACK profile.
+ * Verify that the target sends no trailing ACK before issuing another
+ * command; a trailing ACK can desynchronize the link.
+ * @note On drained success confirmation represents the readiness ACK.
+ * @see as608_process
+ * @see as608_get_result
+ * @see AS60x Communication Manual V1.0, printed pages 16–17, 19 and 31.
+ */
+as608_status_t as608_download_template_start(as608_t *ctx, as608_char_buffer_t buffer, const uint8_t *data, size_t length);
+
+/* Incremental rebuild: APIs 01–18 are defined.
  * The following API declarations remain contracts until restored.
  * See FEATURES.md.
  */
-as608_status_t as608_download_template_start(as608_t *ctx, as608_char_buffer_t buffer,
-                                           const uint8_t *data, size_t length);
 as608_status_t as608_store_template_start(as608_t *ctx, as608_char_buffer_t buffer,
                                         uint16_t page_id);
 as608_status_t as608_read_template_start(as608_t *ctx, uint16_t page_id,
