@@ -6,9 +6,9 @@ This checklist tracks the host library against the Synochip AS60x Communication 
 
 - Checked: implemented in the non-blocking core, within the stated scope.
 - Unchecked: missing, incomplete, or awaiting the indicated validation.
-- Command coverage: **21/31 (67.7%)**; 10 commands remain. UpChar and DownChar are implemented with limited file-size support.
+- Command coverage: **22/31 (71.0%)**; 9 commands remain. UpChar and DownChar are implemented with limited file-size support.
 - Implementation is not equivalent to hardware validation or universal firmware compatibility.
-- API design: all 31 documented opcodes have contracts in [as608.h](as608.h). The 10 missing commands are declarations only under `AS608_DECLARE_PLANNED_API`; they remain unchecked until implemented and tested.
+- API design: all 31 documented opcodes have contracts in [as608.h](as608.h). The 9 missing commands are declarations only under `AS608_DECLARE_PLANNED_API`; they remain unchecked until implemented and tested.
 
 ## Active rebuild status (current source)
 
@@ -42,11 +42,12 @@ This checklist tracks the host library against the Synochip AS60x Communication 
 - [x] API 28: `as608_download_feature_start()` — PS_DownChar (0x09), exact 256-byte feature transmission and TX drain; dedicated host tests, hardware support unverified.
 - [x] API 29: `as608_upload_image_start()` — PS_UpImage (0x0A), exact-length callback stream without image-sized storage; dedicated host tests, hardware support unverified.
 - [x] API 30: `as608_download_image_start()` — PS_DownImage (0x0B), callback source with bounded polling, negotiated 64/128/256-byte fragments and TX drain; hardware support unverified.
+- [x] API 31: `as608_generate_binary_image_start()` — PS_GenBinImage (0x1C), validated modes 0–2 and simple ACK; dedicated host tests, hardware support unverified.
 - [ ] Remaining planned APIs under `AS608_DECLARE_PLANNED_API`.
 
-Active wire-command coverage: **21/31** (PS_VfyPwd 0x13, PS_ReadSysPara 0x0F, PS_ValidTempleteNum 0x1D, PS_ReadIndexTable 0x1F, PS_ReadINFpage 0x16, PS_GetImage 0x01, PS_GenChar 0x02, PS_Match 0x03, PS_RegModel 0x05, PS_Search 0x04, PS_LoadChar 0x07, PS_UpChar 0x08, PS_DownChar 0x09, PS_StoreChar 0x06, PS_DeletChar 0x0C, PS_Empty 0x0D, PS_Enroll 0x10, PS_Identify 0x11, PS_HighSpeedSearch 0x1B, PS_UpImage 0x0A, PS_DownImage 0x0B).
-All 23 baseline APIs are restored and APIs 24–30 are implemented. The independent, dedicated and full
-command/async regression suites are enabled in CI. The 10 remaining
+Active wire-command coverage: **22/31** (PS_VfyPwd 0x13, PS_ReadSysPara 0x0F, PS_ValidTempleteNum 0x1D, PS_ReadIndexTable 0x1F, PS_ReadINFpage 0x16, PS_GetImage 0x01, PS_GenChar 0x02, PS_Match 0x03, PS_RegModel 0x05, PS_Search 0x04, PS_LoadChar 0x07, PS_UpChar 0x08, PS_DownChar 0x09, PS_StoreChar 0x06, PS_DeletChar 0x0C, PS_Empty 0x0D, PS_Enroll 0x10, PS_Identify 0x11, PS_HighSpeedSearch 0x1B, PS_UpImage 0x0A, PS_DownImage 0x0B, PS_GenBinImage 0x1C).
+All 23 baseline APIs are restored and APIs 24–31 are implemented. The independent, dedicated and full
+command/async regression suites are enabled in CI. The 9 remaining
 opcodes are planned, not implemented. Current firmware validation remains
 outstanding; historical hardware results are not new validation.
 
@@ -86,12 +87,13 @@ Additional template capabilities:
 
 - [x] `0x0A PS_UpImage` — Upload ImageBuffer to host through an exact-length stream sink; `as608_upload_image_start()`. Hardware support unverified.
 - [x] `0x0B PS_DownImage` — Stream packed image into ImageBuffer; `as608_download_image_start()`. Hardware support and trailing ACK behavior unverified.
-- [ ] `0x1C PS_GenBinImage` — Generate binary, thinned or minutiae-marked thinned image. Planned: `as608_generate_binary_image_start()`.
+- [x] `0x1C PS_GenBinImage` — Generate binary, thinned or minutiae-marked thinned image; `as608_generate_binary_image_start()`. Hardware support unverified.
 - [x] Stream image uploads without storing a complete image in MCU RAM.
 - [x] Stream image downloads without storing a complete image in MCU RAM.
 - [ ] Encode/decode packed UART image pixels (two 4-bit pixels per byte).
 - [ ] Verify image dimensions and transfer lengths per sensor.
-- [ ] Support GenBinImage modes 0, 1 and 2 and upload results.
+- [x] Support GenBinImage modes 0, 1 and 2 and separate image upload at the API level.
+- [ ] Verify GenBinImage output format and subsequent upload on target hardware.
 - [ ] Optional host-side PGM export and image/feature-quality diagnostics.
 
 ## 4. System configuration and information

@@ -6,9 +6,9 @@ physical sensor. Historical hardware validation: two AS608_QCCF modules on
 STM32F103C8T6, USART1/USART2, 57,600 baud, 8N2; successful 768-byte template
 transfer. The unified non-blocking port still needs hardware validation.
 
-## Incremental API rebuild — active stage 30
+## Incremental API rebuild — active stage 31
 
-The five lifecycle APIs and twenty-five command/job APIs covering twenty-one opcodes (0x13, 0x0F, 0x1D, 0x1F, 0x16, 0x01, 0x02, 0x03, 0x05, 0x04, 0x07, 0x08, 0x09, 0x06, 0x0C, 0x0D, 0x10, 0x11, 0x1B, 0x0A, 0x0B)
+The five lifecycle APIs and twenty-six command/job APIs covering twenty-two opcodes (0x13, 0x0F, 0x1D, 0x1F, 0x16, 0x01, 0x02, 0x03, 0x05, 0x04, 0x07, 0x08, 0x09, 0x06, 0x0C, 0x0D, 0x10, 0x11, 0x1B, 0x0A, 0x0B, 0x1C)
 are currently compiled from as608.c. Process supports simple,
 system-parameter, 16-bit result, search and index-table ACK phases, plus the
 512-byte information-page, 512/768-byte template upload/download and 256-byte feature upload/download and exact-length image upload/download streams.
@@ -24,8 +24,8 @@ Every active static function has a short English purpose comment immediately
 above its definition; follow this convention for newly added helpers.
 The packet and transaction layers are unchanged.
 
-All 23 baseline APIs and APIs 24–30 are now implemented. CI builds independent packet and
-transaction tests, API 01–30 dedicated tests, and full command/async/fault
+All 23 baseline APIs and APIs 24–31 are now implemented. CI builds independent packet and
+transaction tests, API 01–31 dedicated tests, and full command/async/fault
 regressions. Additional planned APIs are declarations only. Target hardware
 validation and the DownChar final-ACK compatibility check remain outstanding.
 
@@ -69,6 +69,7 @@ AS608_lib/
 ├── test_as608_download_feature.c Active API 28 feature download tests
 ├── test_as608_upload_image.c    Active API 29 image upload tests
 ├── test_as608_download_image.c  Active API 30 image download tests
+├── test_as608_generate_binary_image.c Active API 31 image processing tests
 ├── test_as608_transaction.c      Independent transport tests
 ├── test_as608_packet.c           Packet tests
 ├── test_as608_commands.c         Full command and template regression tests
@@ -275,7 +276,7 @@ cc -std=c11 -Wall -Wextra -Werror -pedantic -I. as608_packet.c as608_transaction
 
 See [FEATURES.md](FEATURES.md) for the 31 documented AS60x commands and
 their implementation status. The normal header exposes the implemented
-non-blocking API. The additional, proposed contracts for the 10 missing
+non-blocking API. The additional, proposed contracts for the 9 missing
 opcodes and selected composite operations are grouped under
 `AS608_DECLARE_PLANNED_API` in `as608.h`. Defining the macro before inclusion
 only reveals declarations for review; it does not provide implementations,

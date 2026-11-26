@@ -28,6 +28,7 @@ enum as608_command {
     CMD_VERIFY_PASSWORD = 0x13,
     CMD_READ_INFO = 0x16,
     CMD_HIGH_SPEED_SEARCH = 0x1B,
+    CMD_GEN_BIN_IMAGE = 0x1C,
     CMD_COUNT = 0x1D,
     CMD_READ_INDEX = 0x1F
 };
@@ -1275,6 +1276,28 @@ as608_status_t as608_download_image_start(as608_t *ctx, const as608_stream_sourc
 
 /* =========================================================================
  * END API 30
+ * ========================================================================= */
+
+/* =========================================================================
+ * API 31: as608_generate_binary_image_start
+ * =========================================================================
+ * PS_GenBinImage (0x1C), AS60x MCU User's Guide V1.0, pp. 30–31.
+ * Processes the fingerprint image in ImageBuffer; upload separately.
+ */
+
+as608_status_t as608_generate_binary_image_start(as608_t *ctx, as608_image_mode_t mode) {
+    if ((mode != AS608_IMAGE_BINARY) && (mode != AS608_IMAGE_THINNED) &&
+        (mode != AS608_IMAGE_THINNED_WITH_MINUTIAE)) {
+        return AS608_STATUS_INVALID_ARG;
+    }
+
+    const command_t command = {{CMD_GEN_BIN_IMAGE, (uint8_t)mode}, 2U, STEP_SIMPLE_ACK};
+
+    return launch(ctx, &command);
+}
+
+/* =========================================================================
+ * END API 31
  * ========================================================================= */
 
 /* =========================================================================

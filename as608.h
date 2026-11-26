@@ -100,6 +100,13 @@ typedef enum {
     AS608_CHAR_BUFFER_2 = 2  /**< CharBuffer2. */
 } as608_char_buffer_t;
 
+/** PS_GenBinImage (0x1C) output mode. */
+typedef enum {
+    AS608_IMAGE_BINARY = 0,
+    AS608_IMAGE_THINNED = 1,
+    AS608_IMAGE_THINNED_WITH_MINUTIAE = 2
+} as608_image_mode_t;
+
 /** @brief Decoded 16-byte response to PS_ReadSysPara (0x0F). */
 typedef struct {
     uint16_t status_register;    /**< System status flags. */
@@ -275,10 +282,10 @@ as608_status_t as608_init(as608_t *ctx, const as608_config_t *config);
  * @post A valid terminal ACK sets DONE and stores its raw confirmation
  * code. A transport/protocol fault during BUSY sets DESYNCHRONIZED and
  * records the host error; a non-BUSY context is left unchanged.
- * @note At rebuild stage 30, simple, system-parameter, 16-bit result,
+ * @note At rebuild stage 31, simple, system-parameter, 16-bit result,
  * index-table and search ACK phases plus information-page, template,
- * feature and image upload streaming are active. Template and feature
- * and image download streaming is also supported.
+ * feature and image upload streaming are active. Template, feature and
+ * image download streaming is also supported.
  * @see as608_get_result
  * @see as608_confirm_reset
  */
@@ -1233,6 +1240,37 @@ as608_status_t as608_upload_image_start(as608_t *ctx, const as608_stream_sink_t 
  */
 as608_status_t as608_download_image_start(as608_t *ctx, const as608_stream_source_t *source);
 
+/**
+ * @brief Start sensor-side fingerprint image processing (opcode 0x1C).
+ *
+ * @details PS_GenBinImage processes the image in ImageBuffer using the
+ * requested binary or thinning mode. The response contains only a
+ * confirmation byte; image upload is a separate job.
+ *
+ * @param[in,out] ctx Initialized caller-owned device context.
+ * @param[in] mode AS608_IMAGE_BINARY, AS608_IMAGE_THINNED or
+ * AS608_IMAGE_THINNED_WITH_MINUTIAE.
+ * @retval AS608_STATUS_OK Job admitted; processing is not yet confirmed.
+ * @retval AS608_STATUS_INVALID_ARG Null context or unsupported mode.
+ * @retval AS608_STATUS_NOT_INITIALIZED Context is not initialized.
+ * @retval AS608_STATUS_BUSY Another job owns the context.
+ * @retval AS608_STATUS_RECOVERY_REQUIRED Link is quarantined.
+ * @pre Serialize calls on ctx. ImageBuffer must contain a valid fingerprint
+ * image. Verify command support and output format on the target firmware.
+ * @post A validated terminal ACK is exposed through as608_get_result().
+ * No image bytes are transferred by this API. After a fault or abort,
+ * ImageBuffer contents may be uncertain.
+ * @note Only modes 0, 1 and 2 are accepted, although the manual aliases
+ * other values to mode 2. Negative ACKs (including 0x01, 0x06, 0x07 and
+ * 0x15) remain raw sensor results. Check both result fields before upload.
+ * @see as608_capture_image_start
+ * @see as608_upload_image_start
+ * @see as608_process
+ * @see as608_get_result
+ * @see AS60x MCU User's Guide V1.0, printed pages 30–31.
+ */
+as608_status_t as608_generate_binary_image_start(as608_t *ctx, as608_image_mode_t mode);
+
 /* -------------------------------------------------------------------------
  * Planned API contracts (declarations only; NOT implemented or linkable).
  *
@@ -1275,13 +1313,6 @@ typedef enum {
     AS608_PACKET_SIZE_128 = 2,
     AS608_PACKET_SIZE_256 = 3
 } as608_packet_size_t;
-
-/** PS_GenBinImage (0x1C) output mode. */
-typedef enum {
-    AS608_IMAGE_BINARY = 0,
-    AS608_IMAGE_THINNED = 1,
-    AS608_IMAGE_THINNED_WITH_MINUTIAE = 2
-} as608_image_mode_t;
 
 /** PS_BurnCode (0x1A) upgrade mode; variant-specific, destructive. */
 typedef enum {
@@ -1343,12 +1374,6 @@ typedef struct {
     bool found;
     uint16_t page_id;
 } as608_free_slot_t;
-
-/* ---- Image processing ---- */
-
-/** PS_GenBinImage (0x1C): process ImageBuffer; upload separately. */
-as608_status_t as608_generate_binary_image_start(as608_t *ctx,
-                                                 as608_image_mode_t mode);
 
 /* ---- Configuration (PS_WriteReg 0x0E, typed register setters) ---- */
 
