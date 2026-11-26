@@ -234,7 +234,7 @@ as608_status_t as608_init(as608_t *ctx, const as608_config_t *config);
  * @post A valid terminal ACK sets DONE and stores its raw confirmation
  * code. A transport/protocol fault during BUSY sets DESYNCHRONIZED and
  * records the host error; a non-BUSY context is left unchanged.
- * @note At rebuild stage 20, simple, system-parameter, 16-bit result,
+ * @note At rebuild stage 21, simple, system-parameter, 16-bit result,
  * index-table and search ACK phases plus information-page and template
  * upload/download streaming are active.
  * @see as608_get_result
@@ -847,12 +847,52 @@ as608_status_t as608_store_template_start(as608_t *ctx, as608_char_buffer_t buff
  */
 as608_status_t as608_read_template_start(as608_t *ctx, uint16_t page_id, as608_template_buffer_t *output);
 
-/* Incremental rebuild: APIs 01–20 are defined.
+/**
+ * @brief Start writing a host template into the sensor flash database.
+ *
+ * @details Composite host job: ReadSysPara (0x0F) determines packet
+ * size, DownChar (0x09) transfers the template into CharBuffer1,
+ * and StoreChar (0x06) writes it to PageID after physical TX drain.
+ * One deadline covers all commands, fragments, drain and final ACK.
+ * Accepts 512-byte documented or 768-byte observed templates.
+ *
+ * @param[in,out] ctx Initialized caller-owned device context.
+ * @param[in] page_id Destination flash database slot.
+ * @param[in] data Immutable caller-owned template bytes.
+ * @param[in] length Exactly 512 or 768 bytes.
+ * @retval AS608_STATUS_OK Job admitted; flash write not yet confirmed.
+ * @retval AS608_STATUS_INVALID_ARG Null context/data or unsupported length.
+ * @retval AS608_STATUS_NOT_INITIALIZED Context is not initialized.
+ * @retval AS608_STATUS_BUSY Another job owns the context.
+ * @retval AS608_STATUS_RECOVERY_REQUIRED Link is quarantined.
+ * @pre Serialize calls sharing ctx. Keep data valid, immutable and
+ * separate from driver storage until completion or abort. Choose an
+ * authorized destination within actual capacity and handle occupancy.
+ * Verify template compatibility and the no-final-ACK DownChar profile.
+ * @post On admission, state is BUSY. Negative parameter or readiness
+ * ACK terminates before data or flash storage. StoreChar is scheduled
+ * only after successful download TX drain. Final ACK_OK reports storage
+ * success on the supported firmware profile; no readback is performed.
+ * @warning DownChar final ACK behavior differs between the manual's
+ * detailed description (pp. 16–17) and example (p. 31). On firmware
+ * sending a trailing ACK, it could be mistaken for the StoreChar ACK.
+ * Do not use this composite job until no-final-ACK behavior is verified.
+ * Timeout, abort or I/O fault can leave CharBuffer1 or flash uncertain.
+ * No automatic retry, rollback, occupancy check or readback verification.
+ * @note Check both terminal result fields. Negative ACKs are terminal
+ * sensor results, not host faults. This is not an independent opcode.
+ * @see as608_download_template_start
+ * @see as608_store_template_start
+ * @see as608_process
+ * @see as608_get_result
+ * @see AS60x Communication Manual V1.0, printed pages 15–17, 19–20, 31.
+ */
+as608_status_t as608_write_template_start(as608_t *ctx, uint16_t page_id, const uint8_t *data, size_t length);
+
+/* Incremental rebuild: APIs 01–21 are defined.
  * The following API declarations remain contracts until restored.
  * See FEATURES.md.
  */
-as608_status_t as608_write_template_start(as608_t *ctx, uint16_t page_id,
-                                        const uint8_t *data, size_t length);
 as608_status_t as608_delete_templates_start(as608_t *ctx, uint16_t start_page,
                                           uint16_t page_count);
 as608_status_t as608_empty_database_start(as608_t *ctx);

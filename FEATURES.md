@@ -32,7 +32,8 @@ This checklist tracks the host library against the Synochip AS60x Communication 
 - [x] API 18: `as608_download_template_start()` — PS_DownChar (0x09), negotiated chunk size and physical TX drain; final ACK behavior requires firmware validation.
 - [x] API 19: `as608_store_template_start()` — PS_StoreChar (0x06), page-addressed flash storage and dedicated tests.
 - [x] API 20: `as608_read_template_start()` — composite LoadChar + UpChar, one deadline and dedicated tests.
-- [ ] API 21: `as608_write_template_start()`.
+- [x] API 21: `as608_write_template_start()` — composite ReadSysPara + DownChar + StoreChar, shared deadline and drain gating; requires verified no-final-ACK firmware.
+- [ ] API 22: `as608_delete_templates_start()`.
 - [ ] Remaining command APIs, restored individually in header order.
 
 Active wire-command coverage: **14/31** (PS_VfyPwd 0x13, PS_ReadSysPara 0x0F, PS_ValidTempleteNum 0x1D, PS_ReadIndexTable 0x1F, PS_ReadINFpage 0x16, PS_GetImage 0x01, PS_GenChar 0x02, PS_Match 0x03, PS_RegModel 0x05, PS_Search 0x04, PS_LoadChar 0x07, PS_UpChar 0x08, PS_DownChar 0x09, PS_StoreChar 0x06).

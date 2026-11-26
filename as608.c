@@ -930,6 +930,40 @@ as608_status_t as608_read_template_start(as608_t *ctx, uint16_t page_id, as608_t
  * ========================================================================= */
 
 /* =========================================================================
+ * API 21: as608_write_template_start
+ * =========================================================================
+ * Composite ReadSysPara (0x0F), DownChar (0x09), StoreChar (0x06) job.
+ * AS60x Communication Manual V1.0, pp. 15–17, 19–20.
+ * Requires the no-final-ACK DownChar firmware profile.
+ */
+
+/* Finish a standalone download or schedule flash storage after TX drain. */
+static as608_progress_t download_drained(as608_t *ctx) {
+    if ((ctx->step != STEP_DOWN_DRAIN) || (ctx->input_offset != ctx->input_length)) {
+        return quarantine(ctx, AS608_STATUS_UNEXPECTED_REPLY);
+    }
+
+    if (!ctx->store_after_download) {
+        /* Preserve the readiness ACK; no final ACK was read. */
+        return finish(ctx, AS608_ACK_OK);
+    }
+
+    const command_t command = page_command(CMD_STORE_CHAR, ctx->download_buffer, ctx->page_id);
+
+    return next_or_fault(ctx, command_start(ctx, &command));
+}
+
+as608_status_t as608_write_template_start(as608_t *ctx, uint16_t page_id, const uint8_t *data, size_t length) {
+    const download_t request = {data, length, AS608_CHAR_BUFFER_1, true, page_id};
+
+    return download_start(ctx, &request);
+}
+
+/* =========================================================================
+ * END API 21
+ * ========================================================================= */
+
+/* =========================================================================
  * API 02: as608_process
  * =========================================================================
  * Keep the process dispatcher after the active command API sections so
@@ -1063,12 +1097,7 @@ as608_progress_t as608_process(as608_t *ctx) {
         }
 
         case AS608_TXN_DRAINED: {
-            if ((ctx->step != STEP_DOWN_DRAIN) || (ctx->input_offset != ctx->input_length)) {
-                return quarantine(ctx, AS608_STATUS_UNEXPECTED_REPLY);
-            }
-
-            /* Preserve the readiness ACK; no final ACK was read. */
-            return finish(ctx, AS608_ACK_OK);
+            return download_drained(ctx);
         }
 
         case AS608_TXN_FAULT: {
@@ -1097,13 +1126,6 @@ as608_progress_t as608_process(as608_t *ctx) {
 
 // Remaining command opcodes; migrate into enum as608_command when needed.
 //     CMD_DELETE_CHAR = 0x0C, CMD_EMPTY = 0x0D,
-// 
-// as608_status_t as608_write_template_start(as608_t *ctx, uint16_t page_id,
-//                                         const uint8_t *data, size_t length)
-// {
-//     const download_t request = {data, length, AS608_CHAR_BUFFER_1, true, page_id};
-//     return download_start(ctx, &request);
-// }
 // 
 // as608_status_t as608_delete_templates_start(as608_t *ctx, uint16_t start_page,
 //                                           uint16_t page_count)
@@ -1198,10 +1220,4 @@ as608_progress_t as608_process(as608_t *ctx) {
 //     return success_ack(ctx, frame);
 // }
 // 
-// static as608_progress_t download_drained(as608_t *ctx)
-// {
-//     if (!ctx->store_after_download) return finish(ctx, AS608_ACK_OK);
-//     const command_t command = page_command(CMD_STORE_CHAR,
-//         ctx->download_buffer, ctx->page_id);
-//     return next_or_fault(ctx, command_start(ctx, &command));
-// }
+
