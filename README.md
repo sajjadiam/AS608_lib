@@ -6,9 +6,9 @@ physical sensor. Historical hardware validation: two AS608_QCCF modules on
 STM32F103C8T6, USART1/USART2, 57,600 baud, 8N2; successful 768-byte template
 transfer. The unified non-blocking port still needs hardware validation.
 
-## Incremental API rebuild — active stage 45
+## Incremental API rebuild — active stage 46
 
-The five lifecycle APIs and forty command/job APIs covering thirty-one opcodes (BurnCode experimental) (0x13, 0x0F, 0x1D, 0x1F, 0x16, 0x01, 0x02, 0x03, 0x05, 0x04, 0x07, 0x08, 0x09, 0x06, 0x0C, 0x0D, 0x10, 0x11, 0x1B, 0x0A, 0x0B, 0x1C, 0x0E, 0x17, 0x12, 0x14, 0x15, 0x18, 0x19, 0x1E, 0x1A)
+The five lifecycle APIs and forty-one command/job APIs covering thirty-one opcodes (BurnCode experimental) (0x13, 0x0F, 0x1D, 0x1F, 0x16, 0x01, 0x02, 0x03, 0x05, 0x04, 0x07, 0x08, 0x09, 0x06, 0x0C, 0x0D, 0x10, 0x11, 0x1B, 0x0A, 0x0B, 0x1C, 0x0E, 0x17, 0x12, 0x14, 0x15, 0x18, 0x19, 0x1E, 0x1A)
 are currently compiled from as608.c. Process supports simple,
 system-parameter, 16-bit result, search and index-table ACK phases, plus the
 512-byte information-page, 512/768-byte template upload/download and 256-byte feature upload/download and exact-length image upload/download streams.
@@ -20,6 +20,11 @@ Range identification chains GetImage, GenChar and ordinary Search under
 one deadline, using the requested buffer and range. No automatic finger
 polling or retry; a negative ACK terminates the attempt. Match output is
 committed only after a validated in-range Search success ACK.
+Free-slot discovery reads actual capacity (1..1024), then scans up to four
+32-byte index pages directly from verified receive frames. It ignores
+padding bits, stops at the lowest free PageID, and never reserves a slot.
+LSB-to-lowest-ID mapping is inferred from the related R503 manual; verify
+on the actual AS608 before using the result for enrollment.
 All baseline APIs are restored; the obsolete commented reference is removed
 and remains available in Git history (commit 53425e4). Keep API sections in
 header order, with required static helpers above their first use and explicit
@@ -32,9 +37,9 @@ above its definition; follow this convention for newly added helpers.
 The packet layer is unchanged. API 39 adds an exact per-receive address
 to the transaction layer without weakening normal address validation.
 
-All 23 baseline APIs and APIs 24–45 are now implemented (BurnCode experimental). CI builds independent packet and
-transaction tests, API 01–45 dedicated tests, and full command/async/fault
-regressions. Additional planned APIs are declarations only. Target hardware
+All 23 baseline APIs and APIs 24–46 are now implemented (BurnCode experimental). CI builds independent packet and
+transaction tests, API 01–46 dedicated tests, and full command/async/fault
+regressions. All 46 planned APIs are linkable; BurnCode remains experimental. Target hardware
 validation and the DownChar final-ACK compatibility check remain outstanding.
 
 Baud-rate changes use PS_WriteReg register 4, with the AS608 profile
@@ -129,6 +134,7 @@ AS608_lib/
 ├── test_as608_burn_code.c       Active API 43 experimental burn tests
 ├── test_as608_enroll_two_scan.c Active API 44 enrollment FSM tests
 ├── test_as608_identify_range.c  Active API 45 identification FSM tests
+├── test_as608_find_free_slot.c  Active API 46 free-slot bitmap tests
 ├── test_as608_transaction.c      Independent transport tests
 ├── test_as608_packet.c           Packet tests
 ├── test_as608_commands.c         Full command and template regression tests
@@ -334,14 +340,13 @@ cc -std=c11 -Wall -Wextra -Werror -pedantic -I. as608_packet.c as608_transaction
 ## Full command API design
 
 See [FEATURES.md](FEATURES.md) for the 31 documented AS60x commands and
-their implementation status. The normal header exposes the implemented
-non-blocking API. The additional, proposed contracts for selected
-composite operations are grouped under
-`AS608_DECLARE_PLANNED_API` in `as608.h`. Defining the macro before inclusion
-only reveals declarations for review; it does not provide implementations,
-and linking a call to a planned function will fail until that function
-is implemented. Existing public function signatures are unchanged. APIs 29–30 add stream callback and user fields, and API 36 adds 32 bytes of descriptor staging to the context;
-rebuild code that allocates as608_t.
+their implementation status. All 46 APIs and related types are now exposed
+by the normal header; AS608_DECLARE_PLANNED_API is no longer needed and
+has no effect. BurnCode is an experimental opt-in profile, not validated
+target firmware support. Existing public function signatures are unchanged.
+The context has grown during the rebuild (stream callbacks, descriptor
+staging, receive address, enrollment timing and free-slot capacity).
+Rebuild all code that allocates or embeds as608_t.
 
 Image upload uses a caller-owned sink descriptor with an exact packed byte
 count, copied at admission. Each verified fragment is delivered to a

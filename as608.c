@@ -87,7 +87,9 @@ enum as608_step {
     STEP_ENROLL_WAIT_ARM,
     STEP_ENROLL_WAIT,
     STEP_IDENTIFY_CAPTURE_ACK,
-    STEP_IDENTIFY_GEN_ACK
+    STEP_IDENTIFY_GEN_ACK,
+    STEP_FREE_SLOT_PARAMS_ACK,
+    STEP_FREE_SLOT_INDEX_ACK
 };
 
 /* =========================================================================
@@ -1942,6 +1944,94 @@ as608_status_t as608_identify_range_start(as608_t *ctx, as608_search_t *search) 
  * ========================================================================= */
 
 /* =========================================================================
+ * API 46: as608_find_free_slot_start
+ * =========================================================================
+ * ReadSysPara + ReadIndexTable, AS60x SOC Communication Manual V1.0
+ * (Chinese edition), commands 15 and 31. LSB mapping follows the
+ * related R503 manual; verify on the target before using the result.
+ */
+
+enum {
+    INDEX_PAGE_SLOTS = 256,
+    INDEX_PAGE_COUNT = 4,
+    INDEX_MAX_SLOTS = INDEX_PAGE_SLOTS * INDEX_PAGE_COUNT
+};
+
+/* Read capacity, then inspect one validated bitmap at a time in wire order. */
+static as608_progress_t accept_free_slot_ack(as608_t *ctx) {
+    const as608_transaction_frame_t frame = as608_transaction_received(&ctx->transaction);
+    const bool parameters = (ctx->step == STEP_FREE_SLOT_PARAMS_ACK);
+    const size_t expected = parameters ? 17U : 33U;
+
+    if ((frame.kind != AS608_PACKET_ACK) || ((frame.length != 1U) && (frame.length != expected))) {
+        return quarantine(ctx, AS608_STATUS_UNEXPECTED_REPLY);
+    }
+
+    if (frame.data[0] != AS608_ACK_OK) {
+        return finish(ctx, frame.data[0]);
+    }
+
+    if ((frame.length != expected) || !ctx->reply_output) {
+        return quarantine(ctx, AS608_STATUS_UNEXPECTED_REPLY);
+    }
+
+    if (parameters) {
+        const uint16_t capacity = load_u16(frame.data + 5U);
+
+        if ((capacity == 0U) || (capacity > INDEX_MAX_SLOTS)) {
+            return quarantine(ctx, AS608_STATUS_UNEXPECTED_REPLY);
+        }
+
+        ctx->free_slot_capacity = capacity;
+        ctx->page_id = 0U;
+    } else {
+        if ((ctx->free_slot_capacity == 0U) || (ctx->free_slot_capacity > INDEX_MAX_SLOTS) ||
+            (ctx->page_id >= ctx->free_slot_capacity) || ((ctx->page_id % INDEX_PAGE_SLOTS) != 0U)) {
+            return quarantine(ctx, AS608_STATUS_UNEXPECTED_REPLY);
+        }
+
+        const uint16_t remaining = (uint16_t)(ctx->free_slot_capacity - ctx->page_id);
+        const uint16_t count = (remaining < INDEX_PAGE_SLOTS) ? remaining : INDEX_PAGE_SLOTS;
+        as608_free_slot_t *slot = ctx->reply_output;
+
+        for (uint16_t offset = 0U; offset < count; offset += 8U) {
+            const uint8_t occupied = frame.data[1U + offset / 8U];
+
+            if (occupied == UINT8_MAX) {
+                continue;
+            }
+
+            for (uint16_t bit = 0U; (bit < 8U) && (offset + bit < count); ++bit) {
+                if ((occupied & (uint8_t)(1U << bit)) == 0U) {
+                    *slot = (as608_free_slot_t){true, (uint16_t)(ctx->page_id + offset + bit)};
+                    return finish(ctx, AS608_ACK_OK);
+                }
+            }
+        }
+
+        if (remaining <= INDEX_PAGE_SLOTS) {
+            *slot = (as608_free_slot_t){false, 0U};
+            return finish(ctx, AS608_ACK_OK);
+        }
+
+        ctx->page_id = (uint16_t)(ctx->page_id + INDEX_PAGE_SLOTS);
+    }
+
+    const uint8_t bytes[] = {CMD_READ_INDEX, (uint8_t)(ctx->page_id / INDEX_PAGE_SLOTS)};
+    return next_or_fault(ctx, command_start(ctx, bytes, sizeof(bytes), STEP_FREE_SLOT_INDEX_ACK));
+}
+
+as608_status_t as608_find_free_slot_start(as608_t *ctx, as608_free_slot_t *slot) {
+    const command_t command = {{CMD_READ_PARAMS}, 1U, STEP_FREE_SLOT_PARAMS_ACK};
+
+    return reply_start(ctx, &command, slot);
+}
+
+/* =========================================================================
+ * END API 46
+ * ========================================================================= */
+
+/* =========================================================================
  * API 02: as608_process
  * =========================================================================
  * Keep the process dispatcher after the active command API sections so
@@ -2006,6 +2096,7 @@ as608_progress_t as608_process(as608_t *ctx) {
             limit = 1U;
             break;
         }
+        case STEP_FREE_SLOT_PARAMS_ACK:
         case STEP_READ_PARAMS_ACK:
         case STEP_PARAMS_ACK: {
             limit = 17U;
@@ -2019,6 +2110,7 @@ as608_progress_t as608_process(as608_t *ctx) {
             limit = 3U;
             break;
         }
+        case STEP_FREE_SLOT_INDEX_ACK:
         case STEP_BYTES32_ACK: {
             limit = 33U;
             break;
@@ -2100,6 +2192,10 @@ as608_progress_t as608_process(as608_t *ctx) {
                 case STEP_IDENTIFY_CAPTURE_ACK:
                 case STEP_IDENTIFY_GEN_ACK: {
                     return accept_identify_range_ack(ctx);
+                }
+                case STEP_FREE_SLOT_PARAMS_ACK:
+                case STEP_FREE_SLOT_INDEX_ACK: {
+                    return accept_free_slot_ack(ctx);
                 }
                 case STEP_GPIO_ACK: {
                     return accept_gpio_ack(ctx);

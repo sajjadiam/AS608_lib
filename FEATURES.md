@@ -8,7 +8,7 @@ This checklist tracks the host library against the Synochip AS60x Communication 
 - Unchecked: missing, incomplete, or awaiting the indicated validation.
 - Command coverage: **31/31 opcode implementations** (30 general command implementations + one explicitly authorized experimental BurnCode profile). Target burn procedure is unverified. UpChar and DownChar are implemented with limited file-size support.
 - Implementation is not equivalent to hardware validation or universal firmware compatibility.
-- API design: all 31 documented opcodes have contracts in [as608.h](as608.h). All wire opcodes now have host implementations; BurnCode remains experimental and requires target verification. Composite contracts remain under `AS608_DECLARE_PLANNED_API`.
+- API design: all 31 documented opcodes have contracts in [as608.h](as608.h). All wire opcodes now have host implementations; BurnCode remains experimental and requires target verification. All 46 planned APIs are implemented and exposed without a feature macro; target validation remains separate.
 
 ## Active rebuild status (current source)
 
@@ -57,11 +57,12 @@ This checklist tracks the host library against the Synochip AS60x Communication 
 - [x] API 43: `as608_burn_code_start()` — PS_BurnCode (0x1A), explicit experimental ACK-each profile, recovery gate and dedicated host tests; target validation pending.
 - [x] API 44: `as608_enroll_two_scan_start()` — host-managed two-capture workflow, paced finger removal/placement, shared deadline, final StoreChar ACK; dedicated host tests.
 - [x] API 45: `as608_identify_range_start()` — host GetImage + GenChar + Search, one deadline and one attempt, shared range validation; dedicated host tests.
-- [ ] Remaining planned APIs under `AS608_DECLARE_PLANNED_API`.
+- [x] API 46: `as608_find_free_slot_start()` — ReadSysPara + capacity-bounded ReadIndexTable scan, first free PageID, one deadline and dedicated host tests; target bitmap ordering unverified.
+- [x] All 46 planned APIs are implemented (BurnCode experimental).
 
 Active wire-command coverage: **31/31 including experimental BurnCode** (PS_VfyPwd 0x13, PS_ReadSysPara 0x0F, PS_ValidTempleteNum 0x1D, PS_ReadIndexTable 0x1F, PS_ReadINFpage 0x16, PS_GetImage 0x01, PS_GenChar 0x02, PS_Match 0x03, PS_RegModel 0x05, PS_Search 0x04, PS_LoadChar 0x07, PS_UpChar 0x08, PS_DownChar 0x09, PS_StoreChar 0x06, PS_DeletChar 0x0C, PS_Empty 0x0D, PS_Enroll 0x10, PS_Identify 0x11, PS_HighSpeedSearch 0x1B, PS_UpImage 0x0A, PS_DownImage 0x0B, PS_GenBinImage 0x1C, PS_WriteReg 0x0E, PS_Port_Control 0x17, PS_SetPwd 0x12, PS_GetRandomCode 0x14, PS_SetChipAddr 0x15, PS_WriteNotepad 0x18, PS_ReadNotepad 0x19, PS_UserGPIOCommand 0x1E, PS_BurnCode 0x1A).
-All 23 baseline APIs are restored and APIs 24–45 are implemented (BurnCode is experimental). The independent, dedicated and full
-command/async regression suites are enabled in CI. No wire opcode remains declaration-only; one host composite API remains planned. Current firmware validation remains
+All 23 baseline APIs are restored and APIs 24–46 are implemented (BurnCode is experimental). The independent, dedicated and full
+command/async regression suites are enabled in CI. No wire opcode remains declaration-only; all three host composite APIs are implemented. Current firmware validation remains
 outstanding; historical hardware results are not new validation.
 
 ## 1. Fingerprint acquisition and recognition
@@ -168,12 +169,12 @@ The AS60x V1.0 command list does not establish their opcodes or availability on 
 - [x] Write stored template: ReadSysPara + DownChar + StoreChar; `as608_write_template_start()`.
 - [x] Two-scan enrollment FSM with paced finger placement/removal, GenChar, RegModel and StoreChar: `as608_enroll_two_scan_start()`; verify target behavior.
 - [x] Capture + GenChar + Search identification FSM: `as608_identify_range_start()`; one attempt under the original job deadline.
-- [ ] Free-slot discovery using index table and database capacity. Planned: `as608_find_free_slot_start()`.
+- [x] Free-slot discovery using index table and database capacity: `as608_find_free_slot_start()`; capacity 1..1024, LSB-first, no reservation.
 - [ ] Full database backup/restore with per-template outcomes.
 - [ ] Cross-sensor migration workflow with compatibility checks and partial-failure reporting.
 - [ ] Optional duplicate-finger detection before enrollment.
 
-Primitive commands exist; the remaining free-slot composite API is planned.
+All three planned composite APIs are implemented; verify bitmap bit ordering, capacity and exclusive database ownership on target.
 
 ## 9. Core architecture and transport
 

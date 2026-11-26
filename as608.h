@@ -140,6 +140,14 @@ typedef struct {
     uint16_t baud_multiplier;    /**< UART baud = multiplier * 9600. */
 } as608_parameters_t;
 
+/** Raw system status-register masks (ReadSysPara, manual p. 3). */
+typedef enum {
+    AS608_SENSOR_BUSY = 0x01,
+    AS608_SENSOR_MATCH_PASSED = 0x02,
+    AS608_SENSOR_PASSWORD_VERIFIED = 0x04,
+    AS608_SENSOR_IMAGE_VALID = 0x08
+} as608_sensor_status_flag_t;
+
 /** Fixed-width descriptor bytes, NOT guaranteed NUL-terminated.
  * Raw wire bytes from the documented AS60x layout; verify on target.
  * product_model is not a guaranteed unique device serial number.
@@ -178,6 +186,14 @@ typedef struct {
     uint16_t page_id;
     uint32_t poll_interval_ms; /**< Nonzero scheduler poll interval. */
 } as608_enroll_request_t;
+
+/** Free-slot lookup result, committed on successful completion.
+ * found == false is a valid outcome (no free slot); page_id then invalid.
+ */
+typedef struct {
+    bool found;
+    uint16_t page_id;
+} as608_free_slot_t;
 
 /** @brief Successful fingerprint search output. */
 typedef struct {
@@ -294,6 +310,7 @@ typedef struct {
     uint8_t poll_step;
     as608_transaction_t transaction;
     uint16_t page_id;
+    uint16_t free_slot_capacity;
     uint16_t chunk_size;
     uint32_t poll_interval_ms;
     uint32_t poll_started_ms;
@@ -371,11 +388,11 @@ as608_status_t as608_init(as608_t *ctx, const as608_config_t *config);
  * and stores its raw confirmation
  * code. A transport/protocol fault during BUSY sets DESYNCHRONIZED and
  * records the host error; a non-BUSY context is left unchanged.
- * @note At rebuild stage 45, simple, GPIO, system-parameter, 16/32-bit result,
+ * @note At rebuild stage 46, simple, GPIO, system-parameter, 16/32-bit result,
  * 32-byte index/notepad and search ACK phases plus information-page, template,
  * feature and image upload streaming are active. Template, feature and
  * image download streaming, experimental burn ACK-each, host two-scan
- * enrollment and range identification are supported.
+ * enrollment, range identification and free-slot discovery are supported.
  * @see as608_get_result
  * @see as608_confirm_reset
  */
@@ -1838,41 +1855,44 @@ as608_status_t as608_enroll_two_scan_start(as608_t *ctx, const as608_enroll_requ
  */
 as608_status_t as608_identify_range_start(as608_t *ctx, as608_search_t *search);
 
-/* -------------------------------------------------------------------------
- * Planned API contracts (declarations only; NOT implemented or linkable).
+/**
+ * @brief Start finding the lowest free PageID within the reported database.
  *
- * Define AS608_DECLARE_PLANNED_API before including this header to review
- * the complete proposed API. This macro only exposes declarations; it
- * does not enable code or report device support. See FEATURES.md.
+ * @details Reads capacity using ReadSysPara and then ReadIndexTable pages
+ * in ascending order, stopping at the first zero occupancy bit. Supports
+ * capacities 1..1024 (four 256-slot pages), under one original deadline.
+ * Assumes byte-order ascending and LSB = lowest PageID per byte, as in
+ * the related R503 protocol; the AS60x Chinese manual documents occupancy
+ * polarity and pages but does not explicitly specify bit ordering.
+ * Capacity zero or above 1024 is rejected as an unexpected reply,
+ * not reported as an exhausted database.
  *
- * All planned start calls use the same admission/process/result lifecycle,
- * operation-wide deadline and serialized per-device context. Caller-owned
- * descriptors and referenced memory must stay valid through termination.
- * ------------------------------------------------------------------------- */
-#if defined(AS608_DECLARE_PLANNED_API)
-
-/** Raw system status-register masks (ReadSysPara, manual p. 3). */
-typedef enum {
-    AS608_SENSOR_BUSY = 0x01,
-    AS608_SENSOR_MATCH_PASSED = 0x02,
-    AS608_SENSOR_PASSWORD_VERIFIED = 0x04,
-    AS608_SENSOR_IMAGE_VALID = 0x08
-} as608_sensor_status_flag_t;
-
-/** Free-slot lookup result, committed on successful completion.
- * found == false is a valid outcome (no free slot); page_id then invalid.
+ * @param[in,out] ctx Initialized caller-owned device context.
+ * @param[out] slot Writable caller-owned result.
+ * @retval AS608_STATUS_OK Job admitted; result not yet available.
+ * @retval AS608_STATUS_INVALID_ARG Null context or result.
+ * @retval AS608_STATUS_NOT_INITIALIZED Context is not initialized.
+ * @retval AS608_STATUS_BUSY Another job owns the context.
+ * @retval AS608_STATUS_RECOVERY_REQUIRED Physical link recovery required.
+ * @pre Serialize calls. Keep slot valid and separate from driver storage
+ * through completion or abort. Verify index support, polarity, bit order,
+ * zero-based addressing and capacity on the actual target. Prevent
+ * other interfaces or hosts from modifying the database during the scan.
+ * @post Only successful completion changes slot. found=true means page_id
+ * is the lowest free observed PageID. found=false and page_id=0 indicate
+ * all reported slots occupied; page_id is then invalid. Bits beyond
+ * capacity are ignored. Negative ACK, timeout, abort or other fault
+ * leaves both fields unchanged. No flash writes or slot reservation.
+ * @warning This is an occupancy observation, not a reservation. Ensure
+ * exclusive database ownership through any subsequent StoreChar.
+ * @note Check both terminal result fields before consuming slot.
+ * @see as608_read_parameters_start
+ * @see as608_read_index_table_start
+ * @see as608_process
+ * @see as608_get_result
+ * @see AS60x SOC Communication Manual V1.0 (Chinese), commands 15 and 31.
  */
-typedef struct {
-    bool found;
-    uint16_t page_id;
-} as608_free_slot_t;
-
-/* ---- Host-managed composite operations (no extra wire opcodes) ---- */
-
-/** Read capacity and index table(s) to find a free slot; no flash writes. */
 as608_status_t as608_find_free_slot_start(as608_t *ctx, as608_free_slot_t *slot);
-
-#endif /* AS608_DECLARE_PLANNED_API */
 
 #ifdef __cplusplus
 }
