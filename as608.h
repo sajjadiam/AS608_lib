@@ -152,6 +152,20 @@ typedef struct {
     size_t length; /**< Exact expected nonzero wire byte count. */
 } as608_stream_sink_t;
 
+/** Non-blocking stream source: provide exactly length bytes, 0 if not ready,
+ * or a negative value on failure. No partial positive return is permitted.
+ * Do not advance source state on a zero return. Each request is bounded by
+ * the transport payload limit; no callback may wait or re-enter the driver.
+ */
+typedef int32_t (*as608_stream_read_fn)(void *user, uint8_t *data,
+                                       size_t length);
+
+typedef struct {
+    void *user;
+    as608_stream_read_fn read;
+    size_t length; /**< Exact nonzero number of wire bytes to send. */
+} as608_stream_source_t;
+
 /**
  * @brief Search input and output in a single caller-owned object.
  * @details Set buffer, start_page and page_count before calling the function.
@@ -202,6 +216,7 @@ typedef struct {
     void *reply_output;
     as608_stream_write_fn stream_write;
     void *stream_user;
+    as608_stream_read_fn stream_read;
 } as608_t;
 
 /**
@@ -260,10 +275,10 @@ as608_status_t as608_init(as608_t *ctx, const as608_config_t *config);
  * @post A valid terminal ACK sets DONE and stores its raw confirmation
  * code. A transport/protocol fault during BUSY sets DESYNCHRONIZED and
  * records the host error; a non-BUSY context is left unchanged.
- * @note At rebuild stage 29, simple, system-parameter, 16-bit result,
+ * @note At rebuild stage 30, simple, system-parameter, 16-bit result,
  * index-table and search ACK phases plus information-page, template,
  * feature and image upload streaming are active. Template and feature
- * download streaming is also supported.
+ * and image download streaming is also supported.
  * @see as608_get_result
  * @see as608_confirm_reset
  */
@@ -1177,6 +1192,47 @@ as608_status_t as608_download_feature_start(as608_t *ctx, as608_char_buffer_t bu
  */
 as608_status_t as608_upload_image_start(as608_t *ctx, const as608_stream_sink_t *sink);
 
+/**
+ * @brief Start streaming packed image bytes into ImageBuffer (opcode 0x0B).
+ *
+ * @details Reads system parameters before PS_DownImage. Only packet sizes
+ * 64, 128 and 256 bytes are accepted for this command (manual p. 20).
+ * The exact byte count must be divisible by the negotiated size. After a
+ * positive readiness ACK, polls the source once per source-wait process
+ * call. A zero return waits without transmitting or extending the deadline.
+ * Full fragments are sent in wire order; the last is END_DATA.
+ *
+ * @param[in,out] ctx Initialized caller-owned device context.
+ * @param[in] source Descriptor with read callback and nonzero packed
+ * byte count divisible by 64. Its fields are copied on admission.
+ * @retval AS608_STATUS_OK Job admitted; no source callback has run yet.
+ * @retval AS608_STATUS_INVALID_ARG Null context/descriptor/callback,
+ * zero length or length not divisible by 64.
+ * @retval AS608_STATUS_NOT_INITIALIZED Context is not initialized.
+ * @retval AS608_STATUS_BUSY Another job owns the context.
+ * @retval AS608_STATUS_RECOVERY_REQUIRED Link is quarantined.
+ * @pre Serialize calls on ctx. Keep source->user and its referenced
+ * resources valid through termination or abort. Verify the image format,
+ * exact size, packet size and inter-packet timing on the target firmware.
+ * @post Negative parameter or readiness ACK sends no image bytes.
+ * An incompatible negotiated size fails before PS_DownImage is sent.
+ * Negative, partial positive or oversized callback returns produce
+ * AS608_STATUS_IO_ERROR and quarantine the link. No callback retry after
+ * a fault; previously accepted source bytes and sensor contents are not
+ * rolled back. The callback's writable pointer expires on return.
+ * @warning Completion means readiness ACK_OK and physical TX drain,
+ * not verified sensor acceptance of the full image. Verify that firmware
+ * sends no trailing ACK before starting another job. No automatic retry.
+ * @note The callback must not block or re-enter the driver. It must
+ * supply exactly the requested bytes or return zero without advancing
+ * source state. A single packet-sized temporary buffer is used.
+ * @see as608_upload_image_start
+ * @see as608_process
+ * @see as608_get_result
+ * @see AS60x MCU User's Guide V1.0, printed page 20.
+ */
+as608_status_t as608_download_image_start(as608_t *ctx, const as608_stream_source_t *source);
+
 /* -------------------------------------------------------------------------
  * Planned API contracts (declarations only; NOT implemented or linkable).
  *
@@ -1263,20 +1319,6 @@ typedef struct {
     uint8_t sensor_name[AS608_DEVICE_DESCRIPTOR_BYTES];
 } as608_device_info_t;
 
-/** Non-blocking stream source: provide exactly length bytes, 0 if not ready,
- * or a negative value on failure. No partial positive return is permitted.
- * Do not advance source state on a zero return. Each request is bounded by
- * the transport payload limit; no callback may wait or re-enter the driver.
- */
-typedef int32_t (*as608_stream_read_fn)(void *user, uint8_t *data,
-                                       size_t length);
-
-typedef struct {
-    void *user;
-    as608_stream_read_fn read;
-    size_t length; /**< Exact nonzero number of wire bytes to send. */
-} as608_stream_source_t;
-
 /** Firmware request. Caller must verify device, image and recovery path.
  * The stream describes the vendor-format image, not arbitrary flash data.
  */
@@ -1302,13 +1344,7 @@ typedef struct {
     uint16_t page_id;
 } as608_free_slot_t;
 
-/* ---- Feature and image transfer ---- */
-
-/** PS_DownImage (0x0B): stream packed wire bytes from caller's source.
- * Validate actual dimensions, size and completion behavior per firmware.
- */
-as608_status_t as608_download_image_start(as608_t *ctx,
-                                         const as608_stream_source_t *source);
+/* ---- Image processing ---- */
 
 /** PS_GenBinImage (0x1C): process ImageBuffer; upload separately. */
 as608_status_t as608_generate_binary_image_start(as608_t *ctx,
