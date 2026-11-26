@@ -8,7 +8,7 @@ transfer. The unified non-blocking port still needs hardware validation.
 
 ## Completed API rebuild — 46 APIs
 
-Post-rebuild maintenance: stage 48, common-type contract review.
+Post-rebuild maintenance: stage 49, packet-header contract review.
 
 The five lifecycle APIs and forty-one command/job APIs covering thirty-one opcodes (BurnCode experimental) (0x13, 0x0F, 0x1D, 0x1F, 0x16, 0x01, 0x02, 0x03, 0x05, 0x04, 0x07, 0x08, 0x09, 0x06, 0x0C, 0x0D, 0x10, 0x11, 0x1B, 0x0A, 0x0B, 0x1C, 0x0E, 0x17, 0x12, 0x14, 0x15, 0x18, 0x19, 0x1E, 0x1A)
 are currently compiled from as608.c. Process supports simple,
@@ -36,7 +36,10 @@ declarations. Shared lifecycle helpers and named command/step enums are
 at the top of as608.c. Add new opcodes to the single command enum.
 Every active static function has a short English purpose comment immediately
 above its definition; follow this convention for newly added helpers.
-The packet layer is unchanged. API 39 adds an exact per-receive address
+The packet header now documents structural versus semantic validation,
+wire length and checksum bounds, buffer preconditions and independent
+C11/C++11 header checks. Codec implementation and signatures are unchanged.
+API 39 adds an exact per-receive address
 to the transaction layer without weakening normal address validation.
 
 All 23 baseline APIs and APIs 24–46 are now implemented (BurnCode experimental). CI builds independent packet and

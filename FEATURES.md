@@ -227,3 +227,5 @@ Manual caveats: several entries are reserved or legacy PS1802-specific. Notepad 
 
 - [x] Stage 47: remove unused free-slot test helper; GCC/Clang regression baseline restored.
 - [x] Stage 48: common-type contract review, explicit status values, C11/C++11 requirements and independent compile-time tests. No new wire commands or runtime state.
+
+- [x] Stage 49: packet-header contract review; wire versus storage bounds, zero-length framing, exact address validation, checksum and buffer preconditions, independent C11/C++11 compile-time checks. No codec behavior or layout changes.
