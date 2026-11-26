@@ -36,7 +36,8 @@ enum as608_command {
 
 enum as608_register {
     REG_BAUD_RATE = 0x04,
-    REG_SECURITY_LEVEL = 0x05
+    REG_SECURITY_LEVEL = 0x05,
+    REG_PACKET_SIZE = 0x06
 };
 
 enum as608_step {
@@ -1351,6 +1352,26 @@ as608_status_t as608_set_security_level_start(as608_t *ctx, as608_security_level
 
 /* =========================================================================
  * END API 33
+ * ========================================================================= */
+
+/* =========================================================================
+ * API 34: as608_set_packet_size_start
+ * =========================================================================
+ * PS_WriteReg (0x0E), AS60x Communication Manual V1.0, p. 19.
+ * Register 6 selects the 32/64/128/256-byte data payload size.
+ */
+
+as608_status_t as608_set_packet_size_start(as608_t *ctx, as608_packet_size_t size) {
+    if ((size != AS608_PACKET_SIZE_32) && (size != AS608_PACKET_SIZE_64) &&
+        (size != AS608_PACKET_SIZE_128) && (size != AS608_PACKET_SIZE_256)) {
+        return AS608_STATUS_INVALID_ARG;
+    }
+
+    return write_reg_start(ctx, REG_PACKET_SIZE, (uint8_t)size);
+}
+
+/* =========================================================================
+ * END API 34
  * ========================================================================= */
 
 /* =========================================================================

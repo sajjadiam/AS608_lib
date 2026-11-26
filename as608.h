@@ -116,6 +116,14 @@ typedef enum {
     AS608_SECURITY_LEVEL_5 = 5
 } as608_security_level_t;
 
+/** Wire packet-size codes for PS_WriteReg, register 6. */
+typedef enum {
+    AS608_PACKET_SIZE_32 = 0,
+    AS608_PACKET_SIZE_64 = 1,
+    AS608_PACKET_SIZE_128 = 2,
+    AS608_PACKET_SIZE_256 = 3
+} as608_packet_size_t;
+
 /** @brief Decoded 16-byte response to PS_ReadSysPara (0x0F). */
 typedef struct {
     uint16_t status_register;    /**< System status flags. */
@@ -291,7 +299,7 @@ as608_status_t as608_init(as608_t *ctx, const as608_config_t *config);
  * @post A valid terminal ACK sets DONE and stores its raw confirmation
  * code. A transport/protocol fault during BUSY sets DESYNCHRONIZED and
  * records the host error; a non-BUSY context is left unchanged.
- * @note At rebuild stage 33, simple, system-parameter, 16-bit result,
+ * @note At rebuild stage 34, simple, system-parameter, 16-bit result,
  * index-table and search ACK phases plus information-page, template,
  * feature and image upload streaming are active. Template, feature and
  * image download streaming is also supported.
@@ -1350,6 +1358,41 @@ as608_status_t as608_set_baud_rate_start(as608_t *ctx, uint32_t baud_rate);
  */
 as608_status_t as608_set_security_level_start(as608_t *ctx, as608_security_level_t level);
 
+/**
+ * @brief Start changing the sensor data packet size (PS_WriteReg, 0x0E).
+ *
+ * @details Register 6 accepts codes 0 through 3 for 32, 64, 128 and
+ * 256 payload bytes, respectively, according to the WriteReg table.
+ * These sizes exclude packet header and checksum. The setter does not
+ * resize transport storage or cache the negotiated packet size.
+ *
+ * @param[in,out] ctx Initialized caller-owned device context.
+ * @param[in] size One of AS608_PACKET_SIZE_32, _64, _128 or _256.
+ * @retval AS608_STATUS_OK Job admitted; register update not yet confirmed.
+ * @retval AS608_STATUS_INVALID_ARG Null context or unsupported size code.
+ * @retval AS608_STATUS_NOT_INITIALIZED Context is not initialized.
+ * @retval AS608_STATUS_BUSY Another job owns the context.
+ * @retval AS608_STATUS_RECOVERY_REQUIRED Link is quarantined.
+ * @pre Serialize calls on ctx and verify target firmware support.
+ * @post A validated terminal ACK is exposed through as608_get_result().
+ * Subsequent download jobs read the actual packet-size register again.
+ * @warning The manual describes ACK before configuration update and flash
+ * persistence. Allow target-specific settling time before another job.
+ * ACK_OK is not verified readback; after timeout or abort the setting
+ * may be unknown. No automatic retry or flash persistence guarantee.
+ * @note DownImage retains its command-specific restriction to
+ * 64/128/256-byte packets; selecting 32 bytes is valid for WriteReg
+ * but not for the current DownImage profile. Check both result fields.
+ * @see as608_read_parameters_start
+ * @see as608_download_template_start
+ * @see as608_download_image_start
+ * @see as608_process
+ * @see as608_get_result
+ * @see AS60x Communication Manual V1.0, printed page 19.
+ * @see AS60x MCU User's Guide V1.0, printed page 22.
+ */
+as608_status_t as608_set_packet_size_start(as608_t *ctx, as608_packet_size_t size);
+
 /* -------------------------------------------------------------------------
  * Planned API contracts (declarations only; NOT implemented or linkable).
  *
@@ -1375,14 +1418,6 @@ typedef enum {
     AS608_SENSOR_PASSWORD_VERIFIED = 0x04,
     AS608_SENSOR_IMAGE_VALID = 0x08
 } as608_sensor_status_flag_t;
-
-/** Wire packet-size codes for PS_WriteReg, register 6. */
-typedef enum {
-    AS608_PACKET_SIZE_32 = 0,
-    AS608_PACKET_SIZE_64 = 1,
-    AS608_PACKET_SIZE_128 = 2,
-    AS608_PACKET_SIZE_256 = 3
-} as608_packet_size_t;
 
 /** PS_BurnCode (0x1A) upgrade mode; variant-specific, destructive. */
 typedef enum {
@@ -1445,11 +1480,7 @@ typedef struct {
     uint16_t page_id;
 } as608_free_slot_t;
 
-/* ---- Configuration (PS_WriteReg 0x0E, typed register setters) ---- */
-
-/** Set register 6, code 0..3. */
-as608_status_t as608_set_packet_size_start(as608_t *ctx,
-                                           as608_packet_size_t size);
+/* ---- Configuration and device information ---- */
 
 /** PS_Port_Control (0x17): control the OTHER interface, not the active one.
  * UART controls USB; USB controls UART. Requires verified variant support.

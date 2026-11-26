@@ -265,7 +265,45 @@ static void test_drain_fault(as608_status_t expected) {
     assert(as608_download_template_start(&ctx, AS608_CHAR_BUFFER_1, data, sizeof(data)) == AS608_STATUS_RECOVERY_REQUIRED);
 }
 
+/* Verify a later download uses ReadSysPara, not the requested register value. */
+static void test_packet_size_readback(void) {
+    mock_t mock = {0};
+    as608_t ctx = {0};
+    as608_result_t result;
+    uint8_t data[512U] = {0};
+    const uint8_t write[] = {0x0EU, 0x06U, 0x03U};
+    const uint8_t params[] = {0x0FU};
+    const uint8_t down[] = {0x09U, 0x01U};
+
+    setup(&ctx, &mock);
+    append_ack(&mock, AS608_ACK_OK);
+    assert(as608_set_packet_size_start(&ctx, AS608_PACKET_SIZE_256) == AS608_STATUS_OK);
+    assert(run(&ctx, &mock, false) == AS608_COMPLETE);
+    assert(as608_get_result(&ctx, &result));
+    assert(result.status == AS608_STATUS_OK && result.confirmation == AS608_ACK_OK);
+    size_t pos = check_frame(&mock, 0U, AS608_PACKET_COMMAND, write, sizeof(write));
+
+    /* Deliberately report a different actual setting (64 bytes). */
+    parameters(&mock, AS608_ACK_OK, 1U, 17U);
+    append_ack(&mock, AS608_ACK_OK);
+    mock.idle = 1;
+    assert(as608_download_template_start(&ctx, AS608_CHAR_BUFFER_1, data, sizeof(data)) == AS608_STATUS_OK);
+    assert(run(&ctx, &mock, false) == AS608_COMPLETE);
+    assert(as608_get_result(&ctx, &result));
+    assert(result.status == AS608_STATUS_OK && result.confirmation == AS608_ACK_OK);
+    pos = check_frame(&mock, pos, AS608_PACKET_COMMAND, params, sizeof(params));
+    pos = check_frame(&mock, pos, AS608_PACKET_COMMAND, down, sizeof(down));
+
+    for (size_t offset = 0U; offset < sizeof(data); offset += 64U) {
+        const uint8_t kind = (offset + 64U == sizeof(data)) ? AS608_PACKET_END_DATA : AS608_PACKET_DATA;
+        pos = check_frame(&mock, pos, kind, data + offset, 64U);
+    }
+
+    assert(pos == mock.tx_length && ctx.chunk_size == 64U);
+}
+
 int main(void) {
+    test_packet_size_readback();
     for (uint16_t code = 0U; code <= 3U; ++code) {
         test_success(512U, code, AS608_CHAR_BUFFER_1);
         test_success(768U, code, AS608_CHAR_BUFFER_2);
