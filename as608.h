@@ -137,6 +137,21 @@ typedef struct {
     uint8_t data[AS608_FEATURE_256_BYTES];
 } as608_feature_file_t;
 
+/** Non-blocking stream sink: consume/copy the entire validated fragment
+ * immediately and return true, or return false to fail the job. No RX
+ * backpressure is assumed: an unready sink is a failure, not a retry.
+ * The supplied pointer is borrowed for this call only.
+ */
+typedef bool (*as608_stream_write_fn)(void *user, const uint8_t *data,
+                                     size_t length);
+
+/** @brief Caller-owned descriptor for an exact-length receive stream. */
+typedef struct {
+    void *user;
+    as608_stream_write_fn write;
+    size_t length; /**< Exact expected nonzero wire byte count. */
+} as608_stream_sink_t;
+
 /**
  * @brief Search input and output in a single caller-owned object.
  * @details Set buffer, start_page and page_count before calling the function.
@@ -185,6 +200,8 @@ typedef struct {
     size_t stream_offset;
     size_t *stream_length;
     void *reply_output;
+    as608_stream_write_fn stream_write;
+    void *stream_user;
 } as608_t;
 
 /**
@@ -243,9 +260,10 @@ as608_status_t as608_init(as608_t *ctx, const as608_config_t *config);
  * @post A valid terminal ACK sets DONE and stores its raw confirmation
  * code. A transport/protocol fault during BUSY sets DESYNCHRONIZED and
  * records the host error; a non-BUSY context is left unchanged.
- * @note At rebuild stage 28, simple, system-parameter, 16-bit result,
- * index-table and search ACK phases plus information-page and template
- * upload/download streaming are active.
+ * @note At rebuild stage 29, simple, system-parameter, 16-bit result,
+ * index-table and search ACK phases plus information-page, template,
+ * feature and image upload streaming are active. Template and feature
+ * download streaming is also supported.
  * @see as608_get_result
  * @see as608_confirm_reset
  */
@@ -1124,6 +1142,41 @@ as608_status_t as608_upload_feature_start(as608_t *ctx, as608_char_buffer_t buff
  */
 as608_status_t as608_download_feature_start(as608_t *ctx, as608_char_buffer_t buffer, const as608_feature_file_t *input);
 
+/**
+ * @brief Start streaming packed image bytes to a caller's sink (opcode 0x0A).
+ *
+ * @details PS_UpImage has no command arguments. After ACK_OK, each
+ * checksum-verified DATA/END_DATA fragment is delivered in wire order.
+ * UART image data contains two 4-bit pixels per byte; no unpacking,
+ * dimensions or image-sized allocation is performed by the driver.
+ * Success requires exactly sink->length bytes and a valid END_DATA.
+ *
+ * @param[in,out] ctx Initialized caller-owned device context.
+ * @param[in] sink Non-NULL descriptor with a write callback and exact
+ * nonzero wire byte count. Its fields are copied on admission.
+ * @retval AS608_STATUS_OK Job admitted; no sink callback has run yet.
+ * @retval AS608_STATUS_INVALID_ARG Null context/descriptor/callback or zero length.
+ * @retval AS608_STATUS_NOT_INITIALIZED Context is not initialized.
+ * @retval AS608_STATUS_BUSY Another job owns the context.
+ * @retval AS608_STATUS_RECOVERY_REQUIRED Link is quarantined.
+ * @pre Serialize calls on ctx. Keep sink->user and its referenced
+ * resources valid through termination or abort. ImageBuffer must contain
+ * a valid image. Determine the exact packed size from the target firmware.
+ * @post Negative ACK or malformed first fragment delivers no image bytes.
+ * Subsequent faults may leave previously delivered data in the sink.
+ * Callback false produces AS608_STATUS_IO_ERROR and quarantines the link;
+ * the rejected fragment is not retried. Callback side effects are not undone.
+ * @warning The sink must consume/copy the fragment synchronously without
+ * blocking or re-entering the driver. Its data pointer expires on return.
+ * No RX backpressure is available. Allow adequate UART buffering and
+ * a whole-image timeout; use the image only after both result fields succeed.
+ * @see as608_capture_image_start
+ * @see as608_process
+ * @see as608_get_result
+ * @see AS60x MCU User's Guide V1.0, printed pages 19–20.
+ */
+as608_status_t as608_upload_image_start(as608_t *ctx, const as608_stream_sink_t *sink);
+
 /* -------------------------------------------------------------------------
  * Planned API contracts (declarations only; NOT implemented or linkable).
  *
@@ -1218,25 +1271,11 @@ typedef struct {
 typedef int32_t (*as608_stream_read_fn)(void *user, uint8_t *data,
                                        size_t length);
 
-/** Non-blocking stream sink: consume/copy the entire validated fragment
- * immediately and return true, or return false to fail the job. No RX
- * backpressure is assumed: an unready sink is a failure, not a retry.
- * The supplied pointer is borrowed for this call only.
- */
-typedef bool (*as608_stream_write_fn)(void *user, const uint8_t *data,
-                                     size_t length);
-
 typedef struct {
     void *user;
     as608_stream_read_fn read;
     size_t length; /**< Exact nonzero number of wire bytes to send. */
 } as608_stream_source_t;
-
-typedef struct {
-    void *user;
-    as608_stream_write_fn write;
-    size_t length; /**< Exact expected nonzero wire byte count. */
-} as608_stream_sink_t;
 
 /** Firmware request. Caller must verify device, image and recovery path.
  * The stream describes the vendor-format image, not arbitrary flash data.
@@ -1264,14 +1303,6 @@ typedef struct {
 } as608_free_slot_t;
 
 /* ---- Feature and image transfer ---- */
-
-/** PS_UpImage (0x0A): stream verified wire payload to caller's sink.
- * UART format is two 4-bit pixels per byte; no assumed image dimensions.
- * An exact byte count and END_DATA are required for success. Previously
- * delivered fragments may remain in the sink if the job later fails.
- */
-as608_status_t as608_upload_image_start(as608_t *ctx,
-                                       const as608_stream_sink_t *sink);
 
 /** PS_DownImage (0x0B): stream packed wire bytes from caller's source.
  * Validate actual dimensions, size and completion behavior per firmware.

@@ -6,9 +6,9 @@ This checklist tracks the host library against the Synochip AS60x Communication 
 
 - Checked: implemented in the non-blocking core, within the stated scope.
 - Unchecked: missing, incomplete, or awaiting the indicated validation.
-- Command coverage: **19/31 (61.3%)**; 12 commands remain. UpChar and DownChar are implemented with limited file-size support.
+- Command coverage: **20/31 (64.5%)**; 11 commands remain. UpChar and DownChar are implemented with limited file-size support.
 - Implementation is not equivalent to hardware validation or universal firmware compatibility.
-- API design: all 31 documented opcodes have contracts in [as608.h](as608.h). The 12 missing commands are declarations only under `AS608_DECLARE_PLANNED_API`; they remain unchecked until implemented and tested.
+- API design: all 31 documented opcodes have contracts in [as608.h](as608.h). The 11 missing commands are declarations only under `AS608_DECLARE_PLANNED_API`; they remain unchecked until implemented and tested.
 
 ## Active rebuild status (current source)
 
@@ -40,11 +40,12 @@ This checklist tracks the host library against the Synochip AS60x Communication 
 - [x] API 26: `as608_high_speed_search_start()` — PS_HighSpeedSearch (0x1B), shared range search and match ACK handling; dedicated host tests, hardware support unverified.
 - [x] API 27: `as608_upload_feature_start()` — PS_UpChar (0x08), exact 256-byte feature stream; dedicated host tests, hardware support unverified.
 - [x] API 28: `as608_download_feature_start()` — PS_DownChar (0x09), exact 256-byte feature transmission and TX drain; dedicated host tests, hardware support unverified.
+- [x] API 29: `as608_upload_image_start()` — PS_UpImage (0x0A), exact-length callback stream without image-sized storage; dedicated host tests, hardware support unverified.
 - [ ] Remaining planned APIs under `AS608_DECLARE_PLANNED_API`.
 
-Active wire-command coverage: **19/31** (PS_VfyPwd 0x13, PS_ReadSysPara 0x0F, PS_ValidTempleteNum 0x1D, PS_ReadIndexTable 0x1F, PS_ReadINFpage 0x16, PS_GetImage 0x01, PS_GenChar 0x02, PS_Match 0x03, PS_RegModel 0x05, PS_Search 0x04, PS_LoadChar 0x07, PS_UpChar 0x08, PS_DownChar 0x09, PS_StoreChar 0x06, PS_DeletChar 0x0C, PS_Empty 0x0D, PS_Enroll 0x10, PS_Identify 0x11, PS_HighSpeedSearch 0x1B).
-All 23 baseline APIs are restored and APIs 24–28 are implemented. The independent, dedicated and full
-command/async regression suites are enabled in CI. The 12 remaining
+Active wire-command coverage: **20/31** (PS_VfyPwd 0x13, PS_ReadSysPara 0x0F, PS_ValidTempleteNum 0x1D, PS_ReadIndexTable 0x1F, PS_ReadINFpage 0x16, PS_GetImage 0x01, PS_GenChar 0x02, PS_Match 0x03, PS_RegModel 0x05, PS_Search 0x04, PS_LoadChar 0x07, PS_UpChar 0x08, PS_DownChar 0x09, PS_StoreChar 0x06, PS_DeletChar 0x0C, PS_Empty 0x0D, PS_Enroll 0x10, PS_Identify 0x11, PS_HighSpeedSearch 0x1B, PS_UpImage 0x0A).
+All 23 baseline APIs are restored and APIs 24–29 are implemented. The independent, dedicated and full
+command/async regression suites are enabled in CI. The 11 remaining
 opcodes are planned, not implemented. Current firmware validation remains
 outstanding; historical hardware results are not new validation.
 
@@ -82,10 +83,11 @@ Additional template capabilities:
 
 ## 3. Image transfer and processing
 
-- [ ] `0x0A PS_UpImage` — Upload ImageBuffer to host. Planned: `as608_upload_image_start()`.
+- [x] `0x0A PS_UpImage` — Upload ImageBuffer to host through an exact-length stream sink; `as608_upload_image_start()`. Hardware support unverified.
 - [ ] `0x0B PS_DownImage` — Download image into ImageBuffer. Planned: `as608_download_image_start()`.
 - [ ] `0x1C PS_GenBinImage` — Generate binary, thinned or minutiae-marked thinned image. Planned: `as608_generate_binary_image_start()`.
-- [ ] Stream large images without storing a complete image in MCU RAM.
+- [x] Stream image uploads without storing a complete image in MCU RAM.
+- [ ] Stream image downloads without storing a complete image in MCU RAM.
 - [ ] Encode/decode packed UART image pixels (two 4-bit pixels per byte).
 - [ ] Verify image dimensions and transfer lengths per sensor.
 - [ ] Support GenBinImage modes 0, 1 and 2 and upload results.

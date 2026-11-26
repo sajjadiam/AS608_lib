@@ -6,12 +6,12 @@ physical sensor. Historical hardware validation: two AS608_QCCF modules on
 STM32F103C8T6, USART1/USART2, 57,600 baud, 8N2; successful 768-byte template
 transfer. The unified non-blocking port still needs hardware validation.
 
-## Incremental API rebuild — active stage 28
+## Incremental API rebuild — active stage 29
 
-The five lifecycle APIs and twenty-three command/job APIs covering nineteen opcodes (0x13, 0x0F, 0x1D, 0x1F, 0x16, 0x01, 0x02, 0x03, 0x05, 0x04, 0x07, 0x08, 0x09, 0x06, 0x0C, 0x0D, 0x10, 0x11, 0x1B)
+The five lifecycle APIs and twenty-four command/job APIs covering twenty opcodes (0x13, 0x0F, 0x1D, 0x1F, 0x16, 0x01, 0x02, 0x03, 0x05, 0x04, 0x07, 0x08, 0x09, 0x06, 0x0C, 0x0D, 0x10, 0x11, 0x1B, 0x0A)
 are currently compiled from as608.c. Process supports simple,
 system-parameter, 16-bit result, search and index-table ACK phases, plus the
-512-byte information-page, 512/768-byte template upload/download and 256-byte feature upload/download streams.
+512-byte information-page, 512/768-byte template upload/download and 256-byte feature upload/download and exact-length image upload streams.
 The composite read and write APIs chain their commands under a single job deadline.
 All baseline APIs are restored; the obsolete commented reference is removed
 and remains available in Git history (commit 53425e4). Keep API sections in
@@ -24,8 +24,8 @@ Every active static function has a short English purpose comment immediately
 above its definition; follow this convention for newly added helpers.
 The packet and transaction layers are unchanged.
 
-All 23 baseline APIs and APIs 24–28 are now implemented. CI builds independent packet and
-transaction tests, API 01–28 dedicated tests, and full command/async/fault
+All 23 baseline APIs and APIs 24–29 are now implemented. CI builds independent packet and
+transaction tests, API 01–29 dedicated tests, and full command/async/fault
 regressions. Additional planned APIs are declarations only. Target hardware
 validation and the DownChar final-ACK compatibility check remain outstanding.
 
@@ -67,6 +67,7 @@ AS608_lib/
 ├── test_as608_high_speed_search.c Active API 26 high-speed search tests
 ├── test_as608_upload_feature.c  Active API 27 feature upload tests
 ├── test_as608_download_feature.c Active API 28 feature download tests
+├── test_as608_upload_image.c    Active API 29 image upload tests
 ├── test_as608_transaction.c      Independent transport tests
 ├── test_as608_packet.c           Packet tests
 ├── test_as608_commands.c         Full command and template regression tests
@@ -273,15 +274,18 @@ cc -std=c11 -Wall -Wextra -Werror -pedantic -I. as608_packet.c as608_transaction
 
 See [FEATURES.md](FEATURES.md) for the 31 documented AS60x commands and
 their implementation status. The normal header exposes the implemented
-non-blocking API. The additional, proposed contracts for the 12 missing
+non-blocking API. The additional, proposed contracts for the 11 missing
 opcodes and selected composite operations are grouped under
 `AS608_DECLARE_PLANNED_API` in `as608.h`. Defining the macro before inclusion
 only reveals declarations for review; it does not provide implementations,
 and linking a call to a planned function will fail until that function
-is implemented. The existing public functions and context layout are unchanged.
+is implemented. Existing public function signatures are unchanged. API 29 adds two
+callback fields to the context; rebuild code that allocates as608_t.
 
-Image and firmware data use caller-owned stream descriptors in the planned
-API instead of full-image allocations. Unknown firmware extensions (e.g.
+Image upload uses a caller-owned sink descriptor with an exact packed byte
+count, copied at admission. Each verified fragment is delivered to a
+non-blocking callback; no image-sized driver allocation is required.
+Image download and firmware data retain planned stream-source contracts. Unknown firmware extensions (e.g.
 sleep or LED commands), platform adapters and multi-device backup/migration
 orchestration are tracked separately; no unverified wire commands or
 hardware-specific APIs are promised by the core.

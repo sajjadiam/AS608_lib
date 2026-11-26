@@ -33,7 +33,7 @@ typedef enum {
     AS608_STATUS_OK = 0,          /**< A valid response was received. */
     AS608_STATUS_INVALID_ARG,     /**< Caller supplied an invalid argument. */
     AS608_STATUS_NOT_INITIALIZED, /**< Device context is not initialized. */
-    AS608_STATUS_IO_ERROR,        /**< Platform transport reported an error. */
+    AS608_STATUS_IO_ERROR,        /**< Platform transport or stream callback failed. */
     AS608_STATUS_TIMEOUT,         /**< Overall transaction deadline expired. */
     AS608_STATUS_FRAME_ERROR,     /**< Invalid frame header, address or length. */
     AS608_STATUS_CHECKSUM_ERROR,  /**< Received frame checksum is invalid. */

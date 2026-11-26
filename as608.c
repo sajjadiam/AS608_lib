@@ -18,6 +18,7 @@ enum as608_command {
     CMD_LOAD_CHAR = 0x07,
     CMD_UP_CHAR = 0x08,
     CMD_DOWN_CHAR = 0x09,
+    CMD_UP_IMAGE = 0x0A,
     CMD_DELETE_CHAR = 0x0C,
     CMD_EMPTY = 0x0D,
     CMD_READ_PARAMS = 0x0F,
@@ -47,7 +48,9 @@ enum as608_step {
     STEP_DOWN_DRAIN,
     STEP_IDENTIFY_ACK,
     STEP_FEATURE_ACK,
-    STEP_FEATURE_DATA
+    STEP_FEATURE_DATA,
+    STEP_IMAGE_ACK,
+    STEP_IMAGE_DATA
 };
 
 /* =========================================================================
@@ -259,6 +262,8 @@ static as608_status_t launch(as608_t *ctx, const command_t *command) {
     ctx->result = (as608_result_t){AS608_STATUS_NOT_INITIALIZED, 0U};
     ctx->reply_output = NULL;
     ctx->stream_length = NULL;
+    ctx->stream_write = NULL;
+    ctx->stream_user = NULL;
     as608_transaction_begin(&ctx->transaction);
     ctx->state = AS608_STATE_BUSY;
 
@@ -470,11 +475,14 @@ static as608_progress_t accept_stream_ack(as608_t *ctx, enum as608_step data_ste
     return AS608_PENDING;
 }
 
-/* Validate and copy a stream fragment; commit length only on valid END_DATA. */
+/* Validate and deliver a stream fragment; commit length only on valid END_DATA. */
 static as608_progress_t accept_stream(as608_t *ctx) {
     const as608_transaction_frame_t frame = as608_transaction_received(&ctx->transaction);
 
-    if (!ctx->stream_data || (ctx->stream_offset >= ctx->stream_capacity)) {
+    const bool image = (ctx->step == STEP_IMAGE_DATA);
+
+    if ((image ? !ctx->stream_write : !ctx->stream_data) ||
+        (ctx->stream_offset >= ctx->stream_capacity)) {
         return quarantine(ctx, AS608_STATUS_UNEXPECTED_REPLY);
     }
 
@@ -497,6 +505,10 @@ static as608_progress_t accept_stream(as608_t *ctx) {
             if (total != AS608_FEATURE_256_BYTES) {
                 return quarantine(ctx, AS608_STATUS_UNEXPECTED_REPLY);
             }
+        } else if (image) {
+            if (total != ctx->stream_capacity) {
+                return quarantine(ctx, AS608_STATUS_UNEXPECTED_REPLY);
+            }
         } else {
             if (!supported_size(total) || !ctx->stream_length) {
                 return quarantine(ctx, AS608_STATUS_UNEXPECTED_REPLY);
@@ -506,7 +518,14 @@ static as608_progress_t accept_stream(as608_t *ctx) {
         return quarantine(ctx, AS608_STATUS_UNEXPECTED_REPLY);
     }
 
-    (void)memcpy(ctx->stream_data + ctx->stream_offset, frame.data, frame.length);
+    if (image) {
+        if (!ctx->stream_write(ctx->stream_user, frame.data, frame.length)) {
+            return quarantine(ctx, AS608_STATUS_IO_ERROR);
+        }
+    } else {
+        (void)memcpy(ctx->stream_data + ctx->stream_offset, frame.data, frame.length);
+    }
+
     ctx->stream_offset = total;
 
     if (end) {
@@ -1129,6 +1148,37 @@ as608_status_t as608_download_feature_start(as608_t *ctx, as608_char_buffer_t bu
  * ========================================================================= */
 
 /* =========================================================================
+ * API 29: as608_upload_image_start
+ * =========================================================================
+ * PS_UpImage (0x0A), AS60x MCU User's Guide V1.0, pp. 19–20.
+ * Delivers verified packed image fragments to a caller-owned stream sink.
+ */
+
+as608_status_t as608_upload_image_start(as608_t *ctx, const as608_stream_sink_t *sink) {
+    if (!sink || !sink->write || (sink->length == 0U)) {
+        return AS608_STATUS_INVALID_ARG;
+    }
+
+    const as608_stream_sink_t request = *sink;
+    const command_t command = {{CMD_UP_IMAGE}, 1U, STEP_IMAGE_ACK};
+    const as608_status_t status = launch(ctx, &command);
+
+    if (status == AS608_STATUS_OK) {
+        ctx->stream_data = NULL;
+        ctx->stream_capacity = request.length;
+        ctx->stream_offset = 0U;
+        ctx->stream_write = request.write;
+        ctx->stream_user = request.user;
+    }
+
+    return status;
+}
+
+/* =========================================================================
+ * END API 29
+ * ========================================================================= */
+
+/* =========================================================================
  * API 02: as608_process
  * =========================================================================
  * Keep the process dispatcher after the active command API sections so
@@ -1167,6 +1217,7 @@ as608_progress_t as608_process(as608_t *ctx) {
         case STEP_UP_ACK:
         case STEP_DOWN_ACK:
         case STEP_FEATURE_ACK:
+        case STEP_IMAGE_ACK:
         case STEP_INFO_ACK: {
             limit = 1U;
             break;
@@ -1192,6 +1243,7 @@ as608_progress_t as608_process(as608_t *ctx) {
         case STEP_UP_DATA:
         case STEP_INFO_DATA:
         case STEP_FEATURE_DATA:
+        case STEP_IMAGE_DATA:
         case STEP_DOWN_DATA:
         case STEP_DOWN_DRAIN: {
             limit = 0U; /* Stream handlers schedule their own transport phases. */
@@ -1214,7 +1266,8 @@ as608_progress_t as608_process(as608_t *ctx) {
                 return download_sent(ctx);
             }
 
-            if ((ctx->step == STEP_INFO_DATA) || (ctx->step == STEP_UP_DATA) || (ctx->step == STEP_FEATURE_DATA) || (ctx->step == STEP_DOWN_DRAIN)) {
+            if ((ctx->step == STEP_INFO_DATA) || (ctx->step == STEP_UP_DATA) || (ctx->step == STEP_FEATURE_DATA) ||
+                (ctx->step == STEP_IMAGE_DATA) || (ctx->step == STEP_DOWN_DRAIN)) {
                 return quarantine(ctx, AS608_STATUS_UNEXPECTED_REPLY);
             }
 
@@ -1258,8 +1311,12 @@ as608_progress_t as608_process(as608_t *ctx) {
                 case STEP_FEATURE_ACK: {
                     return accept_stream_ack(ctx, STEP_FEATURE_DATA);
                 }
+                case STEP_IMAGE_ACK: {
+                    return accept_stream_ack(ctx, STEP_IMAGE_DATA);
+                }
                 case STEP_INFO_DATA:
                 case STEP_FEATURE_DATA:
+                case STEP_IMAGE_DATA:
                 case STEP_UP_DATA: {
                     return accept_stream(ctx);
                 }
