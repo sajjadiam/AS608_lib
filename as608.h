@@ -21,6 +21,8 @@
 extern "C" {
 #endif
 
+/** @brief Documented AS60x ordinary feature file size (MCU User's Guide V1.0, section 2.6). */
+#define AS608_FEATURE_256_BYTES ((size_t)256U)
 /** @brief Documented AS60x template size (Communication Manual v1.0, p. 6). */
 #define AS608_TEMPLATE_512_BYTES ((size_t)512U)
 /** @brief Template stream size verified on the two tested AS608_QCCF modules. */
@@ -128,6 +130,13 @@ typedef struct {
     size_t length;   /**< [out] Actual template bytes, success only. */
 } as608_template_buffer_t;
 
+/** Ordinary 256-byte feature file, distinct from a 512/768-byte template.
+ * Do not assume this size/layout on unverified firmware.
+ */
+typedef struct {
+    uint8_t data[AS608_FEATURE_256_BYTES];
+} as608_feature_file_t;
+
 /**
  * @brief Search input and output in a single caller-owned object.
  * @details Set buffer, start_page and page_count before calling the function.
@@ -234,7 +243,7 @@ as608_status_t as608_init(as608_t *ctx, const as608_config_t *config);
  * @post A valid terminal ACK sets DONE and stores its raw confirmation
  * code. A transport/protocol fault during BUSY sets DESYNCHRONIZED and
  * records the host error; a non-BUSY context is left unchanged.
- * @note At rebuild stage 26, simple, system-parameter, 16-bit result,
+ * @note At rebuild stage 27, simple, system-parameter, 16-bit result,
  * index-table and search ACK phases plus information-page and template
  * upload/download streaming are active.
  * @see as608_get_result
@@ -1049,6 +1058,38 @@ as608_status_t as608_identify_start(as608_t *ctx, as608_match_t *match);
  */
 as608_status_t as608_high_speed_search_start(as608_t *ctx, as608_search_t *search);
 
+/**
+ * @brief Start uploading an ordinary 256-byte feature file (opcode 0x08).
+ *
+ * @details PS_UpChar selects a CharBuffer, not a file type. The caller
+ * must ensure that it contains an ordinary feature file, not a template.
+ * A validated readiness ACK_OK is followed by DATA/END_DATA packets.
+ * Success requires exactly 256 payload bytes and a valid END_DATA.
+ *
+ * @param[in,out] ctx Initialized caller-owned device context.
+ * @param[in] buffer AS608_CHAR_BUFFER_1 or AS608_CHAR_BUFFER_2.
+ * @param[out] output Writable caller-owned feature file.
+ * @retval AS608_STATUS_OK Job admitted; feature is not yet available.
+ * @retval AS608_STATUS_INVALID_ARG Null context or output, invalid buffer.
+ * @retval AS608_STATUS_NOT_INITIALIZED Context is not initialized.
+ * @retval AS608_STATUS_BUSY Another job owns the context.
+ * @retval AS608_STATUS_RECOVERY_REQUIRED Link is quarantined.
+ * @pre Serialize calls on ctx. Keep output valid and separate from
+ * driver storage until termination or abort.
+ * @post Validated fragments are copied directly into output->data.
+ * Rejected admission or negative readiness ACK leaves output unchanged.
+ * After a later fault or abort, output may contain a partial prefix;
+ * use it only after both terminal result fields indicate success.
+ * @note Firmware support and the actual wire size must be verified on
+ * the target. A 512/768-byte template is not accepted by this API.
+ * @see as608_generate_character_start
+ * @see as608_upload_template_start
+ * @see as608_process
+ * @see as608_get_result
+ * @see AS60x MCU User's Guide V1.0, sections 2.6 and PS_UpChar.
+ */
+as608_status_t as608_upload_feature_start(as608_t *ctx, as608_char_buffer_t buffer, as608_feature_file_t *output);
+
 /* -------------------------------------------------------------------------
  * Planned API contracts (declarations only; NOT implemented or linkable).
  *
@@ -1063,7 +1104,6 @@ as608_status_t as608_high_speed_search_start(as608_t *ctx, as608_search_t *searc
 #if defined(AS608_DECLARE_PLANNED_API)
 
 /** Documented AS60x V1.0 sizes; actual firmware support must be verified. */
-#define AS608_FEATURE_256_BYTES ((size_t)256U)
 #define AS608_NOTEPAD_PAGE_BYTES ((size_t)32U)
 #define AS608_NOTEPAD_PAGE_COUNT 16U
 #define AS608_DEVICE_DESCRIPTOR_BYTES ((size_t)8U)
@@ -1111,13 +1151,6 @@ typedef enum {
     AS608_USER_GPIO_0 = 0,
     AS608_USER_GPIO_1 = 1
 } as608_user_gpio_t;
-
-/** Ordinary 256-byte feature file, distinct from a 512/768-byte template.
- * Do not assume this size/layout on unverified firmware.
- */
-typedef struct {
-    uint8_t data[AS608_FEATURE_256_BYTES];
-} as608_feature_file_t;
 
 /** Notepad page request/result. Each write replaces the full page. */
 typedef struct {
@@ -1197,11 +1230,6 @@ typedef struct {
 } as608_free_slot_t;
 
 /* ---- Feature and image transfer ---- */
-
-/** PS_UpChar (0x08), ordinary 256-byte feature file (not a template). */
-as608_status_t as608_upload_feature_start(as608_t *ctx,
-                                         as608_char_buffer_t buffer,
-                                         as608_feature_file_t *output);
 
 /** PS_DownChar (0x09), ordinary 256-byte feature file (not a template). */
 as608_status_t as608_download_feature_start(as608_t *ctx,

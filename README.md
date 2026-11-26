@@ -6,12 +6,12 @@ physical sensor. Historical hardware validation: two AS608_QCCF modules on
 STM32F103C8T6, USART1/USART2, 57,600 baud, 8N2; successful 768-byte template
 transfer. The unified non-blocking port still needs hardware validation.
 
-## Incremental API rebuild — active stage 26
+## Incremental API rebuild — active stage 27
 
-The five lifecycle APIs and twenty-one command/job APIs covering nineteen opcodes (0x13, 0x0F, 0x1D, 0x1F, 0x16, 0x01, 0x02, 0x03, 0x05, 0x04, 0x07, 0x08, 0x09, 0x06, 0x0C, 0x0D, 0x10, 0x11, 0x1B)
+The five lifecycle APIs and twenty-two command/job APIs covering nineteen opcodes (0x13, 0x0F, 0x1D, 0x1F, 0x16, 0x01, 0x02, 0x03, 0x05, 0x04, 0x07, 0x08, 0x09, 0x06, 0x0C, 0x0D, 0x10, 0x11, 0x1B)
 are currently compiled from as608.c. Process supports simple,
 system-parameter, 16-bit result, search and index-table ACK phases, plus the
-512-byte information-page and 512/768-byte template upload/download streams.
+512-byte information-page, 512/768-byte template upload/download and 256-byte feature upload streams.
 The composite read and write APIs chain their commands under a single job deadline.
 All baseline APIs are restored; the obsolete commented reference is removed
 and remains available in Git history (commit 53425e4). Keep API sections in
@@ -24,8 +24,8 @@ Every active static function has a short English purpose comment immediately
 above its definition; follow this convention for newly added helpers.
 The packet and transaction layers are unchanged.
 
-All 23 baseline APIs and APIs 24–26 are now implemented. CI builds independent packet and
-transaction tests, API 01–26 dedicated tests, and full command/async/fault
+All 23 baseline APIs and APIs 24–27 are now implemented. CI builds independent packet and
+transaction tests, API 01–27 dedicated tests, and full command/async/fault
 regressions. Additional planned APIs are declarations only. Target hardware
 validation and the DownChar final-ACK compatibility check remain outstanding.
 
@@ -65,6 +65,7 @@ AS608_lib/
 ├── test_as608_enroll.c          Active API 24 automatic enrollment tests
 ├── test_as608_identify.c        Active API 25 automatic identification tests
 ├── test_as608_high_speed_search.c Active API 26 high-speed search tests
+├── test_as608_upload_feature.c  Active API 27 feature upload tests
 ├── test_as608_transaction.c      Independent transport tests
 ├── test_as608_packet.c           Packet tests
 ├── test_as608_commands.c         Full command and template regression tests

@@ -45,7 +45,9 @@ enum as608_step {
     STEP_SEARCH_ACK,
     STEP_INDEX_ACK,
     STEP_DOWN_DRAIN,
-    STEP_IDENTIFY_ACK
+    STEP_IDENTIFY_ACK,
+    STEP_FEATURE_ACK,
+    STEP_FEATURE_DATA
 };
 
 /* =========================================================================
@@ -489,6 +491,10 @@ static as608_progress_t accept_stream(as608_t *ctx) {
     if (end) {
         if (ctx->step == STEP_INFO_DATA) {
             if (total != AS608_INFORMATION_PAGE_BYTES) {
+                return quarantine(ctx, AS608_STATUS_UNEXPECTED_REPLY);
+            }
+        } else if (ctx->step == STEP_FEATURE_DATA) {
+            if (total != AS608_FEATURE_256_BYTES) {
                 return quarantine(ctx, AS608_STATUS_UNEXPECTED_REPLY);
             }
         } else {
@@ -1067,6 +1073,33 @@ as608_status_t as608_high_speed_search_start(as608_t *ctx, as608_search_t *searc
  * ========================================================================= */
 
 /* =========================================================================
+ * API 27: as608_upload_feature_start
+ * =========================================================================
+ * PS_UpChar (0x08), AS60x MCU User's Guide V1.0, sections 2.6 and 4.
+ * Receives exactly one 256-byte feature file from the selected CharBuffer.
+ */
+
+as608_status_t as608_upload_feature_start(as608_t *ctx, as608_char_buffer_t buffer, as608_feature_file_t *output) {
+    if (!output || !valid_buffer(buffer)) {
+        return AS608_STATUS_INVALID_ARG;
+    }
+
+    const command_t command = {{CMD_UP_CHAR, (uint8_t)buffer}, 2U, STEP_FEATURE_ACK};
+    const as608_status_t status = launch(ctx, &command);
+
+    if (status == AS608_STATUS_OK) {
+        const as608_template_buffer_t stream = {output->data, AS608_FEATURE_256_BYTES, 0U};
+        stream_setup(ctx, stream);
+    }
+
+    return status;
+}
+
+/* =========================================================================
+ * END API 27
+ * ========================================================================= */
+
+/* =========================================================================
  * API 02: as608_process
  * =========================================================================
  * Keep the process dispatcher after the active command API sections so
@@ -1104,6 +1137,7 @@ as608_progress_t as608_process(as608_t *ctx) {
         case STEP_LOAD_ACK:
         case STEP_UP_ACK:
         case STEP_DOWN_ACK:
+        case STEP_FEATURE_ACK:
         case STEP_INFO_ACK: {
             limit = 1U;
             break;
@@ -1128,6 +1162,7 @@ as608_progress_t as608_process(as608_t *ctx) {
         }
         case STEP_UP_DATA:
         case STEP_INFO_DATA:
+        case STEP_FEATURE_DATA:
         case STEP_DOWN_DATA:
         case STEP_DOWN_DRAIN: {
             limit = 0U; /* Stream handlers schedule their own transport phases. */
@@ -1150,7 +1185,7 @@ as608_progress_t as608_process(as608_t *ctx) {
                 return download_sent(ctx);
             }
 
-            if ((ctx->step == STEP_INFO_DATA) || (ctx->step == STEP_UP_DATA) || (ctx->step == STEP_DOWN_DRAIN)) {
+            if ((ctx->step == STEP_INFO_DATA) || (ctx->step == STEP_UP_DATA) || (ctx->step == STEP_FEATURE_DATA) || (ctx->step == STEP_DOWN_DRAIN)) {
                 return quarantine(ctx, AS608_STATUS_UNEXPECTED_REPLY);
             }
 
@@ -1191,7 +1226,11 @@ as608_progress_t as608_process(as608_t *ctx) {
                 case STEP_UP_ACK: {
                     return accept_stream_ack(ctx, STEP_UP_DATA);
                 }
+                case STEP_FEATURE_ACK: {
+                    return accept_stream_ack(ctx, STEP_FEATURE_DATA);
+                }
                 case STEP_INFO_DATA:
+                case STEP_FEATURE_DATA:
                 case STEP_UP_DATA: {
                     return accept_stream(ctx);
                 }
