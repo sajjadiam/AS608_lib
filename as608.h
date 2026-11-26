@@ -770,12 +770,49 @@ as608_status_t as608_upload_template_start(as608_t *ctx, as608_char_buffer_t buf
  */
 as608_status_t as608_download_template_start(as608_t *ctx, as608_char_buffer_t buffer, const uint8_t *data, size_t length);
 
-/* Incremental rebuild: APIs 01–18 are defined.
+/**
+ * @brief Start storing a template in flash (PS_StoreChar, opcode 0x06).
+ *
+ * @details Stores the template from the selected internal CharBuffer
+ * at the specified database PageID. The command contains BufferID and
+ * a 16-bit big-endian PageID and expects a one-byte confirmation ACK.
+ * No host template bytes are transferred.
+ *
+ * @param[in,out] ctx Initialized caller-owned device context.
+ * @param[in] buffer Source AS608_CHAR_BUFFER_1 or AS608_CHAR_BUFFER_2.
+ * @param[in] page_id Destination flash database slot.
+ * @retval AS608_STATUS_OK Job admitted; storage not yet confirmed.
+ * @retval AS608_STATUS_INVALID_ARG Null context or unsupported buffer ID.
+ * @retval AS608_STATUS_NOT_INITIALIZED Context is not initialized.
+ * @retval AS608_STATUS_BUSY Another job owns the context.
+ * @retval AS608_STATUS_RECOVERY_REQUIRED Link is quarantined.
+ * @pre Serialize calls sharing ctx. The selected CharBuffer must contain
+ * a valid template. The application must choose an authorized destination
+ * slot within actual sensor capacity and handle existing contents.
+ * The driver neither checks slot occupancy nor caches database capacity.
+ * If the template was downloaded, verify the target's DownChar behavior
+ * before storing; physical TX drain alone does not confirm acceptance.
+ * @post On admission, state is BUSY and the job deadline starts.
+ * Rejected admission leaves the context and previous result unchanged.
+ * @warning This is a flash-writing command. Timeout, abort or transport
+ * failure may leave the destination slot modified or its contents uncertain.
+ * No rollback, readback, implicit overwrite check or automatic retry occurs.
+ * @note Check both terminal result fields. ACK_OK (0x00) confirms the
+ * sensor reports successful storage. Packet error (0x01), invalid PageID
+ * (0x0B) and flash write error (0x18) are terminal sensor results, not
+ * host transport faults. A negative ACK does not prove flash is unchanged.
+ * @see as608_create_model_start
+ * @see as608_download_template_start
+ * @see as608_process
+ * @see as608_get_result
+ * @see AS60x Communication Manual V1.0, printed page 15.
+ */
+as608_status_t as608_store_template_start(as608_t *ctx, as608_char_buffer_t buffer, uint16_t page_id);
+
+/* Incremental rebuild: APIs 01–19 are defined.
  * The following API declarations remain contracts until restored.
  * See FEATURES.md.
  */
-as608_status_t as608_store_template_start(as608_t *ctx, as608_char_buffer_t buffer,
-                                        uint16_t page_id);
 as608_status_t as608_read_template_start(as608_t *ctx, uint16_t page_id,
                                        as608_template_buffer_t *output);
 as608_status_t as608_write_template_start(as608_t *ctx, uint16_t page_id,

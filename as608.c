@@ -14,6 +14,7 @@ enum as608_command {
     CMD_MATCH = 0x03,
     CMD_SEARCH = 0x04,
     CMD_REG_MODEL = 0x05,
+    CMD_STORE_CHAR = 0x06,
     CMD_LOAD_CHAR = 0x07,
     CMD_UP_CHAR = 0x08,
     CMD_DOWN_CHAR = 0x09,
@@ -873,6 +874,27 @@ as608_status_t as608_download_template_start(as608_t *ctx, as608_char_buffer_t b
  * ========================================================================= */
 
 /* =========================================================================
+ * API 19: as608_store_template_start
+ * =========================================================================
+ * PS_StoreChar (0x06), AS60x Communication Manual V1.0, p. 15.
+ * Stores a template from the selected character buffer into flash.
+ */
+
+as608_status_t as608_store_template_start(as608_t *ctx, as608_char_buffer_t buffer, uint16_t page_id) {
+    if (!valid_buffer(buffer)) {
+        return AS608_STATUS_INVALID_ARG;
+    }
+
+    const command_t command = page_command(CMD_STORE_CHAR, buffer, page_id);
+
+    return launch(ctx, &command);
+}
+
+/* =========================================================================
+ * END API 19
+ * ========================================================================= */
+
+/* =========================================================================
  * API 02: as608_process
  * =========================================================================
  * Keep the process dispatcher after the active command API sections so
@@ -1035,16 +1057,7 @@ as608_progress_t as608_process(as608_t *ctx) {
  * ========================================================================= */
 
 // Remaining command opcodes; migrate into enum as608_command when needed.
-//     CMD_STORE_CHAR = 0x06,
 //     CMD_DELETE_CHAR = 0x0C, CMD_EMPTY = 0x0D,
-// 
-// as608_status_t as608_store_template_start(as608_t *ctx, as608_char_buffer_t buffer,
-//                                         uint16_t page_id)
-// {
-//     if (!valid_buffer(buffer)) return AS608_STATUS_INVALID_ARG;
-//     const command_t command = page_command(CMD_STORE_CHAR, buffer, page_id);
-//     return launch(ctx, &command);
-// }
 // 
 // as608_status_t as608_read_template_start(as608_t *ctx, uint16_t page_id,
 //                                        as608_template_buffer_t *output)
