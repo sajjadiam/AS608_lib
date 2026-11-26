@@ -95,11 +95,6 @@ static void append_frame(mock_t *mock, uint8_t kind, const uint8_t *payload, siz
     mock->rx_length += 11U + length;
 }
 
-/* Append a one-byte confirmation ACK. */
-static void append_ack(mock_t *mock, uint8_t ack) {
-    append_frame(mock, AS608_PACKET_ACK, &ack, 1U);
-}
-
 /* Advance one poll and verify bounded callback work. */
 static as608_progress_t step(as608_t *ctx, mock_t *mock) {
     const unsigned int io = mock->io_calls;
