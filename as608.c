@@ -22,6 +22,7 @@ enum as608_command {
     CMD_EMPTY = 0x0D,
     CMD_READ_PARAMS = 0x0F,
     CMD_ENROLL = 0x10,
+    CMD_IDENTIFY = 0x11,
     CMD_VERIFY_PASSWORD = 0x13,
     CMD_READ_INFO = 0x16,
     CMD_COUNT = 0x1D,
@@ -42,7 +43,8 @@ enum as608_step {
     STEP_U16_ACK,
     STEP_SEARCH_ACK,
     STEP_INDEX_ACK,
-    STEP_DOWN_DRAIN
+    STEP_DOWN_DRAIN,
+    STEP_IDENTIFY_ACK
 };
 
 /* =========================================================================
@@ -630,8 +632,8 @@ static void store_u16(uint8_t *bytes, uint16_t value) {
     bytes[1] = (uint8_t)value;
 }
 
-/* Validate the search ACK and commit its match only on success. */
-static as608_progress_t accept_search_ack(as608_t *ctx) {
+/* Validate a match ACK and enforce the requested range for Search. */
+static as608_progress_t accept_match_ack(as608_t *ctx) {
     const as608_transaction_frame_t frame = as608_transaction_received(&ctx->transaction);
 
     if ((frame.kind != AS608_PACKET_ACK) || ((frame.length != 1U) && (frame.length != 5U))) {
@@ -646,15 +648,20 @@ static as608_progress_t accept_search_ack(as608_t *ctx) {
         return quarantine(ctx, AS608_STATUS_UNEXPECTED_REPLY);
     }
 
-    as608_search_t *search = ctx->reply_output;
     const as608_match_t match = {load_u16(frame.data + 1U), load_u16(frame.data + 3U)};
-    const uint32_t end = (uint32_t)search->start_page + (uint32_t)search->page_count;
 
-    if ((match.page_id < search->start_page) || ((uint32_t)match.page_id >= end)) {
-        return quarantine(ctx, AS608_STATUS_UNEXPECTED_REPLY);
+    if (ctx->step == STEP_SEARCH_ACK) {
+        as608_search_t *search = ctx->reply_output;
+        const uint32_t end = (uint32_t)search->start_page + (uint32_t)search->page_count;
+
+        if ((match.page_id < search->start_page) || ((uint32_t)match.page_id >= end)) {
+            return quarantine(ctx, AS608_STATUS_UNEXPECTED_REPLY);
+        }
+
+        search->match = match;
+    } else {
+        *(as608_match_t *)ctx->reply_output = match;
     }
-
-    search->match = match;
     return finish(ctx, AS608_ACK_OK);
 }
 
@@ -1022,6 +1029,23 @@ as608_status_t as608_enroll_start(as608_t *ctx, uint16_t *page_id) {
  * ========================================================================= */
 
 /* =========================================================================
+ * API 25: as608_identify_start
+ * =========================================================================
+ * PS_Identify (0x11), AS60x Communication Manual V1.0, p. 21.
+ * Automatic acquisition and identification; may update an incomplete template.
+ */
+
+as608_status_t as608_identify_start(as608_t *ctx, as608_match_t *match) {
+    const command_t command = {{CMD_IDENTIFY}, 1U, STEP_IDENTIFY_ACK};
+
+    return reply_start(ctx, &command, match);
+}
+
+/* =========================================================================
+ * END API 25
+ * ========================================================================= */
+
+/* =========================================================================
  * API 02: as608_process
  * =========================================================================
  * Keep the process dispatcher after the active command API sections so
@@ -1076,7 +1100,8 @@ as608_progress_t as608_process(as608_t *ctx) {
             limit = 33U;
             break;
         }
-        case STEP_SEARCH_ACK: {
+        case STEP_SEARCH_ACK:
+        case STEP_IDENTIFY_ACK: {
             limit = 5U;
             break;
         }
@@ -1132,8 +1157,9 @@ as608_progress_t as608_process(as608_t *ctx) {
                 case STEP_INDEX_ACK: {
                     return accept_index_ack(ctx);
                 }
-                case STEP_SEARCH_ACK: {
-                    return accept_search_ack(ctx);
+                case STEP_SEARCH_ACK:
+                case STEP_IDENTIFY_ACK: {
+                    return accept_match_ack(ctx);
                 }
                 case STEP_INFO_ACK: {
                     return accept_stream_ack(ctx, STEP_INFO_DATA);

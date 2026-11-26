@@ -234,7 +234,7 @@ as608_status_t as608_init(as608_t *ctx, const as608_config_t *config);
  * @post A valid terminal ACK sets DONE and stores its raw confirmation
  * code. A transport/protocol fault during BUSY sets DESYNCHRONIZED and
  * records the host error; a non-BUSY context is left unchanged.
- * @note At rebuild stage 24, simple, system-parameter, 16-bit result,
+ * @note At rebuild stage 25, simple, system-parameter, 16-bit result,
  * index-table and search ACK phases plus information-page and template
  * upload/download streaming are active.
  * @see as608_get_result
@@ -986,6 +986,38 @@ as608_status_t as608_empty_database_start(as608_t *ctx);
  */
 as608_status_t as608_enroll_start(as608_t *ctx, uint16_t *page_id);
 
+/**
+ * @brief Start sensor-managed fingerprint identification (opcode 0x11).
+ *
+ * @details PS_Identify takes no command arguments. The sensor acquires
+ * a fingerprint and searches its database. A successful ACK contains
+ * a confirmation byte, a 16-bit big-endian PageID and a 16-bit
+ * big-endian MatchScore. No host-selected search range is used.
+ *
+ * @param[in,out] ctx Initialized caller-owned device context.
+ * @param[out] match Writable caller-owned match result.
+ * @retval AS608_STATUS_OK Job admitted; match is not yet available.
+ * @retval AS608_STATUS_INVALID_ARG Null context or output.
+ * @retval AS608_STATUS_NOT_INITIALIZED Context is not initialized.
+ * @retval AS608_STATUS_BUSY Another job owns the context.
+ * @retval AS608_STATUS_RECOVERY_REQUIRED Link is quarantined.
+ * @pre Serialize calls on ctx. Keep match valid and separate from
+ * driver storage until the job terminates or is aborted.
+ * @post Match is written only after a checksum-verified ACK_OK with
+ * a 5-byte payload. On rejection, negative ACK, timeout, protocol
+ * error or abort, match remains unchanged.
+ * @warning The firmware may update an incomplete stored template when
+ * the score exceeds its upper threshold. Timeout or abort does not
+ * undo sensor-side changes. No automatic retry is performed.
+ * @note Firmware support must be verified on the target. Poll
+ * as608_process() and check both result fields before using match.
+ * ACK_NOT_FOUND (0x09) is a terminal sensor result, not a host fault.
+ * @see as608_process
+ * @see as608_get_result
+ * @see AS60x Communication Manual V1.0, printed page 21.
+ */
+as608_status_t as608_identify_start(as608_t *ctx, as608_match_t *match);
+
 /* -------------------------------------------------------------------------
  * Planned API contracts (declarations only; NOT implemented or linkable).
  *
@@ -1134,11 +1166,6 @@ typedef struct {
 } as608_free_slot_t;
 
 /* ---- Fingerprint recognition ---- */
-
-/** PS_Identify (0x11): firmware-managed acquisition/search.
- * @warning Manual describes possible updates of incomplete templates.
- */
-as608_status_t as608_identify_start(as608_t *ctx, as608_match_t *match);
 
 /** PS_HighSpeedSearch (0x1B): same request/output contract as Search. */
 as608_status_t as608_high_speed_search_start(as608_t *ctx,
