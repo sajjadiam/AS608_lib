@@ -28,6 +28,7 @@ enum as608_command {
     CMD_IDENTIFY = 0x11,
     CMD_VERIFY_PASSWORD = 0x13,
     CMD_READ_INFO = 0x16,
+    CMD_PORT_CONTROL = 0x17,
     CMD_HIGH_SPEED_SEARCH = 0x1B,
     CMD_GEN_BIN_IMAGE = 0x1C,
     CMD_COUNT = 0x1D,
@@ -1372,6 +1373,23 @@ as608_status_t as608_set_packet_size_start(as608_t *ctx, as608_packet_size_t siz
 
 /* =========================================================================
  * END API 34
+ * ========================================================================= */
+
+/* =========================================================================
+ * API 35: as608_control_other_port_start
+ * =========================================================================
+ * PS_Port_Control (0x17), AS60x MCU User's Guide V1.0, pp. 27–28.
+ * Enables or disables the other communication interface.
+ */
+
+as608_status_t as608_control_other_port_start(as608_t *ctx, bool enabled) {
+    const command_t command = {{CMD_PORT_CONTROL, enabled ? 1U : 0U}, 2U, STEP_SIMPLE_ACK};
+
+    return launch(ctx, &command);
+}
+
+/* =========================================================================
+ * END API 35
  * ========================================================================= */
 
 /* =========================================================================

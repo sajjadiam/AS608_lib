@@ -299,7 +299,7 @@ as608_status_t as608_init(as608_t *ctx, const as608_config_t *config);
  * @post A valid terminal ACK sets DONE and stores its raw confirmation
  * code. A transport/protocol fault during BUSY sets DESYNCHRONIZED and
  * records the host error; a non-BUSY context is left unchanged.
- * @note At rebuild stage 34, simple, system-parameter, 16-bit result,
+ * @note At rebuild stage 35, simple, system-parameter, 16-bit result,
  * index-table and search ACK phases plus information-page, template,
  * feature and image upload streaming are active. Template, feature and
  * image download streaming is also supported.
@@ -1393,6 +1393,37 @@ as608_status_t as608_set_security_level_start(as608_t *ctx, as608_security_level
  */
 as608_status_t as608_set_packet_size_start(as608_t *ctx, as608_packet_size_t size);
 
+/**
+ * @brief Start enabling or disabling the other sensor port (opcode 0x17).
+ *
+ * @details PS_Port_Control sends 0 to disable or 1 to enable the
+ * interface other than the one carrying the command. Over UART it
+ * controls USB; over USB it controls UART. The active link is not
+ * selected by a separate argument.
+ *
+ * @param[in,out] ctx Initialized caller-owned device context.
+ * @param[in] enabled true to enable, false to disable the other port.
+ * @retval AS608_STATUS_OK Job admitted; port operation not yet confirmed.
+ * @retval AS608_STATUS_INVALID_ARG Null context.
+ * @retval AS608_STATUS_NOT_INITIALIZED Context is not initialized.
+ * @retval AS608_STATUS_BUSY Another job owns the context.
+ * @retval AS608_STATUS_RECOVERY_REQUIRED Link is quarantined.
+ * @pre Serialize calls on ctx. Verify the target supports this command
+ * and the other interface, and retain a physical recovery path.
+ * @post A validated terminal ACK is exposed through as608_get_result().
+ * The driver does not reconfigure host transport callbacks or cache
+ * the sensor port state.
+ * @warning A fault or abort can leave the other port state uncertain.
+ * No automatic retry or persistence guarantee. Do not use this command
+ * as proof of physical isolation or as a security boundary.
+ * @note Check both result fields. ACK 0x1D is a sensor port-operation
+ * error, not a host transport fault. Hardware support is variant-specific.
+ * @see as608_process
+ * @see as608_get_result
+ * @see AS60x MCU User's Guide V1.0, printed pages 27–28.
+ */
+as608_status_t as608_control_other_port_start(as608_t *ctx, bool enabled);
+
 /* -------------------------------------------------------------------------
  * Planned API contracts (declarations only; NOT implemented or linkable).
  *
@@ -1481,11 +1512,6 @@ typedef struct {
 } as608_free_slot_t;
 
 /* ---- Configuration and device information ---- */
-
-/** PS_Port_Control (0x17): control the OTHER interface, not the active one.
- * UART controls USB; USB controls UART. Requires verified variant support.
- */
-as608_status_t as608_control_other_port_start(as608_t *ctx, bool enabled);
 
 /** Composite ReadINFpage (0x16) + descriptor decoding. */
 as608_status_t as608_read_device_info_start(as608_t *ctx,
