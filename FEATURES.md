@@ -6,9 +6,9 @@ This checklist tracks the host library against the Synochip AS60x Communication 
 
 - Checked: implemented in the non-blocking core, within the stated scope.
 - Unchecked: missing, incomplete, or awaiting the indicated validation.
-- Command coverage: **25/31 (80.6%)**; 6 commands remain. UpChar and DownChar are implemented with limited file-size support.
+- Command coverage: **26/31 (83.9%)**; 5 commands remain. UpChar and DownChar are implemented with limited file-size support.
 - Implementation is not equivalent to hardware validation or universal firmware compatibility.
-- API design: all 31 documented opcodes have contracts in [as608.h](as608.h). The 6 missing commands are declarations only under `AS608_DECLARE_PLANNED_API`; they remain unchecked until implemented and tested.
+- API design: all 31 documented opcodes have contracts in [as608.h](as608.h). The 5 missing commands are declarations only under `AS608_DECLARE_PLANNED_API`; they remain unchecked until implemented and tested.
 
 ## Active rebuild status (current source)
 
@@ -49,11 +49,12 @@ This checklist tracks the host library against the Synochip AS60x Communication 
 - [x] API 35: `as608_control_other_port_start()` — PS_Port_Control (0x17), boolean control of the other interface; dedicated host tests, hardware support unverified.
 - [x] API 36: `as608_read_device_info_start()` — PS_ReadINFpage (0x16), selective 32-byte staging and atomic descriptor output; dedicated host tests, target layout unverified.
 - [x] API 37: `as608_set_password_start()` — PS_SetPwd (0x12), shared big-endian password command encoding; dedicated host tests, persistence unverified.
+- [x] API 38: `as608_get_random_code_start()` — PS_GetRandomCode (0x14), validated 32-bit result ACK; dedicated host tests, hardware support and entropy unverified.
 - [ ] Remaining planned APIs under `AS608_DECLARE_PLANNED_API`.
 
-Active wire-command coverage: **25/31** (PS_VfyPwd 0x13, PS_ReadSysPara 0x0F, PS_ValidTempleteNum 0x1D, PS_ReadIndexTable 0x1F, PS_ReadINFpage 0x16, PS_GetImage 0x01, PS_GenChar 0x02, PS_Match 0x03, PS_RegModel 0x05, PS_Search 0x04, PS_LoadChar 0x07, PS_UpChar 0x08, PS_DownChar 0x09, PS_StoreChar 0x06, PS_DeletChar 0x0C, PS_Empty 0x0D, PS_Enroll 0x10, PS_Identify 0x11, PS_HighSpeedSearch 0x1B, PS_UpImage 0x0A, PS_DownImage 0x0B, PS_GenBinImage 0x1C, PS_WriteReg 0x0E, PS_Port_Control 0x17, PS_SetPwd 0x12).
-All 23 baseline APIs are restored and APIs 24–37 are implemented. The independent, dedicated and full
-command/async regression suites are enabled in CI. The 6 remaining
+Active wire-command coverage: **26/31** (PS_VfyPwd 0x13, PS_ReadSysPara 0x0F, PS_ValidTempleteNum 0x1D, PS_ReadIndexTable 0x1F, PS_ReadINFpage 0x16, PS_GetImage 0x01, PS_GenChar 0x02, PS_Match 0x03, PS_RegModel 0x05, PS_Search 0x04, PS_LoadChar 0x07, PS_UpChar 0x08, PS_DownChar 0x09, PS_StoreChar 0x06, PS_DeletChar 0x0C, PS_Empty 0x0D, PS_Enroll 0x10, PS_Identify 0x11, PS_HighSpeedSearch 0x1B, PS_UpImage 0x0A, PS_DownImage 0x0B, PS_GenBinImage 0x1C, PS_WriteReg 0x0E, PS_Port_Control 0x17, PS_SetPwd 0x12, PS_GetRandomCode 0x14).
+All 23 baseline APIs are restored and APIs 24–38 are implemented. The independent, dedicated and full
+command/async regression suites are enabled in CI. The 5 remaining
 opcodes are planned, not implemented. Current firmware validation remains
 outstanding; historical hardware results are not new validation.
 
@@ -122,7 +123,7 @@ Additional template capabilities:
 
 - [x] `0x12 PS_SetPwd` — Change 32-bit handshake password; `as608_set_password_start()`. Verify separately; hardware persistence unverified.
 - [x] `0x13 PS_VfyPwd` — Verify 32-bit handshake password; `as608_verify_password_start()`.
-- [ ] `0x14 PS_GetRandomCode` — Read 32-bit random code. Planned: `as608_get_random_code_start()`.
+- [x] `0x14 PS_GetRandomCode` — Read 32-bit random code; `as608_get_random_code_start()`. No entropy or cryptographic guarantee.
 - [ ] `0x15 PS_SetChipAddr` — Set device address. Planned: `as608_set_device_address_start()`.
 - [x] Configurable host-side address and strict received-address validation.
 - [ ] Handle address-change reply transition according to verified firmware behavior.

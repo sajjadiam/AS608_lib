@@ -313,7 +313,7 @@ as608_status_t as608_init(as608_t *ctx, const as608_config_t *config);
  * @post A valid terminal ACK sets DONE and stores its raw confirmation
  * code. A transport/protocol fault during BUSY sets DESYNCHRONIZED and
  * records the host error; a non-BUSY context is left unchanged.
- * @note At rebuild stage 37, simple, system-parameter, 16-bit result,
+ * @note At rebuild stage 38, simple, system-parameter, 16/32-bit result,
  * index-table and search ACK phases plus information-page, template,
  * feature and image upload streaming are active. Template, feature and
  * image download streaming is also supported.
@@ -1503,6 +1503,35 @@ as608_status_t as608_read_device_info_start(as608_t *ctx, as608_device_info_t *i
  */
 as608_status_t as608_set_password_start(as608_t *ctx, uint32_t password);
 
+/**
+ * @brief Start requesting a sensor-generated random code (opcode 0x14).
+ *
+ * @details PS_GetRandomCode takes no arguments. A successful ACK
+ * contains the confirmation and four big-endian result bytes.
+ *
+ * @param[in,out] ctx Initialized caller-owned device context.
+ * @param[out] code Writable caller-owned uint32_t result.
+ * @retval AS608_STATUS_OK Job admitted; code is not yet available.
+ * @retval AS608_STATUS_INVALID_ARG Null context or output.
+ * @retval AS608_STATUS_NOT_INITIALIZED Context is not initialized.
+ * @retval AS608_STATUS_BUSY Another job owns the context.
+ * @retval AS608_STATUS_RECOVERY_REQUIRED Link is quarantined.
+ * @pre Serialize calls on ctx. Keep code valid and separate from driver
+ * storage through completion or abort.
+ * @post Only a checksum-verified ACK_OK with exactly five payload bytes
+ * changes code. Negative ACK (one or five bytes), admission rejection,
+ * protocol fault, timeout or abort leaves code unchanged.
+ * @warning No entropy, uniqueness or cryptographic randomness guarantee.
+ * Do not use the returned value alone as cryptographic key material.
+ * Repeated values and zero are valid wire results.
+ * @note Check both result fields before consuming code. Firmware support
+ * and random-generator properties are unverified on the target.
+ * @see as608_process
+ * @see as608_get_result
+ * @see AS60x MCU User's Guide V1.0, printed page 26.
+ */
+as608_status_t as608_get_random_code_start(as608_t *ctx, uint32_t *code);
+
 /* -------------------------------------------------------------------------
  * Planned API contracts (declarations only; NOT implemented or linkable).
  *
@@ -1578,10 +1607,7 @@ typedef struct {
     uint16_t page_id;
 } as608_free_slot_t;
 
-/* ---- Password, address and random number ---- */
-
-/** PS_GetRandomCode (0x14): raw random code, not a security guarantee. */
-as608_status_t as608_get_random_code_start(as608_t *ctx, uint32_t *code);
+/* ---- Address provisioning ---- */
 
 /** PS_SetChipAddr (0x15): address provisioning, not arbitrary reassignment.
  * Manual p. 23 specifies a default-address command and a new-address reply.

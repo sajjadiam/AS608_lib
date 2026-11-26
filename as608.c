@@ -28,6 +28,7 @@ enum as608_command {
     CMD_IDENTIFY = 0x11,
     CMD_SET_PASSWORD = 0x12,
     CMD_VERIFY_PASSWORD = 0x13,
+    CMD_GET_RANDOM_CODE = 0x14,
     CMD_READ_INFO = 0x16,
     CMD_PORT_CONTROL = 0x17,
     CMD_HIGH_SPEED_SEARCH = 0x1B,
@@ -64,7 +65,8 @@ enum as608_step {
     STEP_IMAGE_DATA,
     STEP_DOWN_SOURCE,
     STEP_DEVICE_INFO_ACK,
-    STEP_DEVICE_INFO_DATA
+    STEP_DEVICE_INFO_DATA,
+    STEP_U32_ACK
 };
 
 /* =========================================================================
@@ -1469,6 +1471,43 @@ as608_status_t as608_set_password_start(as608_t *ctx, uint32_t password) {
  * ========================================================================= */
 
 /* =========================================================================
+ * API 38: as608_get_random_code_start
+ * =========================================================================
+ * PS_GetRandomCode (0x14), AS60x MCU User's Guide V1.0, p. 26.
+ * Successful ACK contains a raw 32-bit random code.
+ */
+
+/* Validate a 32-bit result ACK before publishing its decoded value. */
+static as608_progress_t accept_u32_ack(as608_t *ctx) {
+    const as608_transaction_frame_t frame = as608_transaction_received(&ctx->transaction);
+
+    if ((frame.kind != AS608_PACKET_ACK) || ((frame.length != 1U) && (frame.length != 5U))) {
+        return quarantine(ctx, AS608_STATUS_UNEXPECTED_REPLY);
+    }
+
+    if (frame.data[0] != AS608_ACK_OK) {
+        return finish(ctx, frame.data[0]);
+    }
+
+    if ((frame.length != 5U) || !ctx->reply_output) {
+        return quarantine(ctx, AS608_STATUS_UNEXPECTED_REPLY);
+    }
+
+    *(uint32_t *)ctx->reply_output = load_u32(frame.data + 1U);
+    return finish(ctx, AS608_ACK_OK);
+}
+
+as608_status_t as608_get_random_code_start(as608_t *ctx, uint32_t *code) {
+    const command_t command = {{CMD_GET_RANDOM_CODE}, 1U, STEP_U32_ACK};
+
+    return reply_start(ctx, &command, code);
+}
+
+/* =========================================================================
+ * END API 38
+ * ========================================================================= */
+
+/* =========================================================================
  * API 02: as608_process
  * =========================================================================
  * Keep the process dispatcher after the active command API sections so
@@ -1530,6 +1569,7 @@ as608_progress_t as608_process(as608_t *ctx) {
             limit = 33U;
             break;
         }
+        case STEP_U32_ACK:
         case STEP_SEARCH_ACK:
         case STEP_IDENTIFY_ACK: {
             limit = 5U;
@@ -1588,6 +1628,9 @@ as608_progress_t as608_process(as608_t *ctx) {
                 }
                 case STEP_U16_ACK: {
                     return accept_u16_ack(ctx);
+                }
+                case STEP_U32_ACK: {
+                    return accept_u32_ack(ctx);
                 }
                 case STEP_INDEX_ACK: {
                     return accept_index_ack(ctx);
