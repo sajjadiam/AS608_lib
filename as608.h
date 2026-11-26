@@ -243,7 +243,7 @@ as608_status_t as608_init(as608_t *ctx, const as608_config_t *config);
  * @post A valid terminal ACK sets DONE and stores its raw confirmation
  * code. A transport/protocol fault during BUSY sets DESYNCHRONIZED and
  * records the host error; a non-BUSY context is left unchanged.
- * @note At rebuild stage 27, simple, system-parameter, 16-bit result,
+ * @note At rebuild stage 28, simple, system-parameter, 16-bit result,
  * index-table and search ACK phases plus information-page and template
  * upload/download streaming are active.
  * @see as608_get_result
@@ -1090,6 +1090,40 @@ as608_status_t as608_high_speed_search_start(as608_t *ctx, as608_search_t *searc
  */
 as608_status_t as608_upload_feature_start(as608_t *ctx, as608_char_buffer_t buffer, as608_feature_file_t *output);
 
+/**
+ * @brief Start downloading an ordinary 256-byte feature file (opcode 0x09).
+ *
+ * @details Reads system parameters to select the 32/64/128/256-byte
+ * fragment size, sends PS_DownChar and waits for a valid readiness ACK.
+ * Sends exactly 256 bytes with END_DATA on the last fragment. One job
+ * deadline covers all phases and physical TX drain. No flash store occurs.
+ *
+ * @param[in,out] ctx Initialized caller-owned device context.
+ * @param[in] buffer AS608_CHAR_BUFFER_1 or AS608_CHAR_BUFFER_2.
+ * @param[in] input Immutable caller-owned 256-byte feature file.
+ * @retval AS608_STATUS_OK Job admitted; transfer is not yet complete.
+ * @retval AS608_STATUS_INVALID_ARG Null context or input, invalid buffer.
+ * @retval AS608_STATUS_NOT_INITIALIZED Context is not initialized.
+ * @retval AS608_STATUS_BUSY Another job owns the context.
+ * @retval AS608_STATUS_RECOVERY_REQUIRED Link is quarantined.
+ * @pre Serialize calls on ctx. Keep input valid, immutable and separate
+ * from driver storage through termination or abort. Verify the feature
+ * format and 256-byte transfer support on the target firmware.
+ * @post A negative parameter or readiness ACK prevents feature data
+ * transmission. Abort or fault can leave partial sensor buffer contents.
+ * @warning Completion means readiness ACK_OK and physical TX drain,
+ * not verified sensor acceptance of the entire feature. This API uses
+ * the existing no-final-ACK DownChar profile. The manual's example
+ * flow shows an additional ACK; verify its absence on the target
+ * before issuing another command. No automatic retry is performed.
+ * @note On drained success, confirmation represents the readiness ACK.
+ * @see as608_download_template_start
+ * @see as608_process
+ * @see as608_get_result
+ * @see AS60x MCU User's Guide V1.0, section 2.6 and PS_DownChar.
+ */
+as608_status_t as608_download_feature_start(as608_t *ctx, as608_char_buffer_t buffer, const as608_feature_file_t *input);
+
 /* -------------------------------------------------------------------------
  * Planned API contracts (declarations only; NOT implemented or linkable).
  *
@@ -1230,11 +1264,6 @@ typedef struct {
 } as608_free_slot_t;
 
 /* ---- Feature and image transfer ---- */
-
-/** PS_DownChar (0x09), ordinary 256-byte feature file (not a template). */
-as608_status_t as608_download_feature_start(as608_t *ctx,
-                                           as608_char_buffer_t buffer,
-                                           const as608_feature_file_t *input);
 
 /** PS_UpImage (0x0A): stream verified wire payload to caller's sink.
  * UART format is two 4-bit pixels per byte; no assumed image dimensions.

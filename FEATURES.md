@@ -39,10 +39,11 @@ This checklist tracks the host library against the Synochip AS60x Communication 
 - [x] API 25: `as608_identify_start()` — PS_Identify (0x11), automatic acquisition and database match; dedicated host tests, hardware support unverified.
 - [x] API 26: `as608_high_speed_search_start()` — PS_HighSpeedSearch (0x1B), shared range search and match ACK handling; dedicated host tests, hardware support unverified.
 - [x] API 27: `as608_upload_feature_start()` — PS_UpChar (0x08), exact 256-byte feature stream; dedicated host tests, hardware support unverified.
+- [x] API 28: `as608_download_feature_start()` — PS_DownChar (0x09), exact 256-byte feature transmission and TX drain; dedicated host tests, hardware support unverified.
 - [ ] Remaining planned APIs under `AS608_DECLARE_PLANNED_API`.
 
 Active wire-command coverage: **19/31** (PS_VfyPwd 0x13, PS_ReadSysPara 0x0F, PS_ValidTempleteNum 0x1D, PS_ReadIndexTable 0x1F, PS_ReadINFpage 0x16, PS_GetImage 0x01, PS_GenChar 0x02, PS_Match 0x03, PS_RegModel 0x05, PS_Search 0x04, PS_LoadChar 0x07, PS_UpChar 0x08, PS_DownChar 0x09, PS_StoreChar 0x06, PS_DeletChar 0x0C, PS_Empty 0x0D, PS_Enroll 0x10, PS_Identify 0x11, PS_HighSpeedSearch 0x1B).
-All 23 baseline APIs are restored and APIs 24–27 are implemented. The independent, dedicated and full
+All 23 baseline APIs are restored and APIs 24–28 are implemented. The independent, dedicated and full
 command/async regression suites are enabled in CI. The 12 remaining
 opcodes are planned, not implemented. Current firmware validation remains
 outstanding; historical hardware results are not new validation.
@@ -63,7 +64,7 @@ outstanding; historical hardware results are not new validation.
 - [x] `0x06 PS_StoreChar` — Store a character buffer at flash PageID; `as608_store_template_start()`.
 - [x] `0x07 PS_LoadChar` — Load a stored template into a character buffer; `as608_load_template_start()`.
 - [x] `0x08 PS_UpChar` — Sensor-to-host 512/768-byte template upload and separate 256-byte feature upload; `as608_upload_template_start()`, `as608_upload_feature_start()`.
-- [x] `0x09 PS_DownChar` — Host-to-sensor template download, 512/768 bytes only; `as608_download_template_start()`.
+- [x] `0x09 PS_DownChar` — Host-to-sensor 512/768-byte template download and separate 256-byte feature download; `as608_download_template_start()`, `as608_download_feature_start()`.
 - [x] `0x0C PS_DeletChar` — Delete a consecutive range of templates; `as608_delete_templates_start()`.
 - [x] `0x0D PS_Empty` — Erase the fingerprint database; `as608_empty_database_start()`.
 - [x] `0x1D PS_ValidTempleteNum` — Count valid templates; `as608_get_template_count_start()`.
@@ -75,7 +76,7 @@ Additional template capabilities:
 - [x] Opaque 512/768-byte templates with actual received length.
 - [x] Negotiated outbound packet size: 32/64/128/256 bytes.
 - [x] Upload ordinary 256-byte feature files separately from templates: `as608_upload_feature_start()`; firmware support unverified.
-- [ ] Download ordinary 256-byte feature files. Planned: `as608_download_feature_start()`.
+- [x] Download ordinary 256-byte feature files separately from templates: `as608_download_feature_start()`; firmware support and final-ACK behavior unverified.
 - [ ] Verify other file lengths per firmware; do not assume arbitrary lengths.
 - [ ] Verify DownChar post-stream ACK behavior per firmware. Standalone download currently completes at physical TX drain; composite write also checks StoreChar ACK. The manual's workflow on printed p. 31 shows an additional ACK after data.
 

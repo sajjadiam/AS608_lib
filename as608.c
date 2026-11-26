@@ -781,7 +781,7 @@ typedef struct {
 
 /* Admit a download and retain its source and optional store request. */
 static as608_status_t download_start(as608_t *ctx, const download_t *request) {
-    if (!request->data || !supported_size(request->length) || !valid_buffer(request->buffer)) {
+    if (!request->data || (request->length == 0U) || !valid_buffer(request->buffer)) {
         return AS608_STATUS_INVALID_ARG;
     }
 
@@ -886,6 +886,10 @@ static as608_progress_t download_sent(as608_t *ctx) {
 }
 
 as608_status_t as608_download_template_start(as608_t *ctx, as608_char_buffer_t buffer, const uint8_t *data, size_t length) {
+    if (!supported_size(length)) {
+        return AS608_STATUS_INVALID_ARG;
+    }
+
     const download_t request = {data, length, buffer, false, 0U};
 
     return download_start(ctx, &request);
@@ -976,6 +980,10 @@ static as608_progress_t download_drained(as608_t *ctx) {
 }
 
 as608_status_t as608_write_template_start(as608_t *ctx, uint16_t page_id, const uint8_t *data, size_t length) {
+    if (!supported_size(length)) {
+        return AS608_STATUS_INVALID_ARG;
+    }
+
     const download_t request = {data, length, AS608_CHAR_BUFFER_1, true, page_id};
 
     return download_start(ctx, &request);
@@ -1097,6 +1105,27 @@ as608_status_t as608_upload_feature_start(as608_t *ctx, as608_char_buffer_t buff
 
 /* =========================================================================
  * END API 27
+ * ========================================================================= */
+
+/* =========================================================================
+ * API 28: as608_download_feature_start
+ * =========================================================================
+ * PS_DownChar (0x09), AS60x MCU User's Guide V1.0, section 2.6 and p. 19.
+ * Sends a 256-byte feature file using the existing no-final-ACK profile.
+ */
+
+as608_status_t as608_download_feature_start(as608_t *ctx, as608_char_buffer_t buffer, const as608_feature_file_t *input) {
+    if (!input) {
+        return AS608_STATUS_INVALID_ARG;
+    }
+
+    const download_t request = {input->data, AS608_FEATURE_256_BYTES, buffer, false, 0U};
+
+    return download_start(ctx, &request);
+}
+
+/* =========================================================================
+ * END API 28
  * ========================================================================= */
 
 /* =========================================================================
