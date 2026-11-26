@@ -26,6 +26,7 @@ enum as608_command {
     CMD_READ_PARAMS = 0x0F,
     CMD_ENROLL = 0x10,
     CMD_IDENTIFY = 0x11,
+    CMD_SET_PASSWORD = 0x12,
     CMD_VERIFY_PASSWORD = 0x13,
     CMD_READ_INFO = 0x16,
     CMD_PORT_CONTROL = 0x17,
@@ -284,9 +285,10 @@ static as608_status_t launch(as608_t *ctx, const command_t *command) {
     return AS608_STATUS_OK;
 }
 
-as608_status_t as608_verify_password_start(as608_t *ctx, uint32_t password) {
+/* Launch a password command with a big-endian 32-bit value. */
+static as608_status_t password_start(as608_t *ctx, uint8_t code, uint32_t password) {
     const command_t command = {{
-        CMD_VERIFY_PASSWORD,
+        code,
         (uint8_t)(password >> 24U),
         (uint8_t)(password >> 16U),
         (uint8_t)(password >> 8U),
@@ -294,6 +296,10 @@ as608_status_t as608_verify_password_start(as608_t *ctx, uint32_t password) {
     }, 5U, STEP_SIMPLE_ACK};
 
     return launch(ctx, &command);
+}
+
+as608_status_t as608_verify_password_start(as608_t *ctx, uint32_t password) {
+    return password_start(ctx, CMD_VERIFY_PASSWORD, password);
 }
 
 /* =========================================================================
@@ -1445,6 +1451,21 @@ as608_status_t as608_read_device_info_start(as608_t *ctx, as608_device_info_t *i
 
 /* =========================================================================
  * END API 36
+ * ========================================================================= */
+
+/* =========================================================================
+ * API 37: as608_set_password_start
+ * =========================================================================
+ * PS_SetPwd (0x12), AS60x MCU User's Guide V1.0, p. 25.
+ * Changes the sensor handshake password; verify separately.
+ */
+
+as608_status_t as608_set_password_start(as608_t *ctx, uint32_t password) {
+    return password_start(ctx, CMD_SET_PASSWORD, password);
+}
+
+/* =========================================================================
+ * END API 37
  * ========================================================================= */
 
 /* =========================================================================

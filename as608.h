@@ -313,7 +313,7 @@ as608_status_t as608_init(as608_t *ctx, const as608_config_t *config);
  * @post A valid terminal ACK sets DONE and stores its raw confirmation
  * code. A transport/protocol fault during BUSY sets DESYNCHRONIZED and
  * records the host error; a non-BUSY context is left unchanged.
- * @note At rebuild stage 36, simple, system-parameter, 16-bit result,
+ * @note At rebuild stage 37, simple, system-parameter, 16-bit result,
  * index-table and search ACK phases plus information-page, template,
  * feature and image upload streaming are active. Template, feature and
  * image download streaming is also supported.
@@ -1470,6 +1470,39 @@ as608_status_t as608_control_other_port_start(as608_t *ctx, bool enabled);
  */
 as608_status_t as608_read_device_info_start(as608_t *ctx, as608_device_info_t *info);
 
+/**
+ * @brief Start changing the sensor handshake password (PS_SetPwd, 0x12).
+ *
+ * @details Sends a 32-bit big-endian password and expects a one-byte
+ * confirmation. All uint32_t values are representable, including zero.
+ * The application owns the credential and any required prior verification.
+ *
+ * @param[in,out] ctx Initialized caller-owned device context.
+ * @param[in] password New sensor handshake password.
+ * @retval AS608_STATUS_OK Job admitted; password change not yet confirmed.
+ * @retval AS608_STATUS_INVALID_ARG Null context.
+ * @retval AS608_STATUS_NOT_INITIALIZED Context is not initialized.
+ * @retval AS608_STATUS_BUSY Another job owns the context.
+ * @retval AS608_STATUS_RECOVERY_REQUIRED Link is quarantined.
+ * @pre Serialize calls on ctx and retain the old and new credentials
+ * securely until the change is verified. Verify target firmware support.
+ * @post A validated terminal ACK is exposed through as608_get_result().
+ * No separate host password cache or automatic verification is used.
+ * @warning The password is transmitted in plaintext and may remain in
+ * transport buffers. Do not log packet contents or raw information pages;
+ * this is not cryptographic authentication or secure transport.
+ * After timeout, abort or communication fault, the actual password may
+ * be unknown. Re-establish the link before recovery; do not auto-retry.
+ * @note Check both result fields. Verify the new password separately
+ * with PS_VfyPwd; ACK_OK is not independent verification or proof of
+ * persistence after power cycling. Zero is the documented default.
+ * @see as608_verify_password_start
+ * @see as608_process
+ * @see as608_get_result
+ * @see AS60x MCU User's Guide V1.0, printed pages 25–26.
+ */
+as608_status_t as608_set_password_start(as608_t *ctx, uint32_t password);
+
 /* -------------------------------------------------------------------------
  * Planned API contracts (declarations only; NOT implemented or linkable).
  *
@@ -1546,9 +1579,6 @@ typedef struct {
 } as608_free_slot_t;
 
 /* ---- Password, address and random number ---- */
-
-/** PS_SetPwd (0x12): change handshake password; verify separately. */
-as608_status_t as608_set_password_start(as608_t *ctx, uint32_t password);
 
 /** PS_GetRandomCode (0x14): raw random code, not a security guarantee. */
 as608_status_t as608_get_random_code_start(as608_t *ctx, uint32_t *code);
