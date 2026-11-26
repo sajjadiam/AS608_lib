@@ -16,6 +16,7 @@ typedef struct {
     size_t rx_length;
     size_t rx_offset;
     size_t calls;
+    size_t clock_calls;
     uint32_t now;
     int32_t idle;
     bool stall;
@@ -68,7 +69,9 @@ static int32_t idle(void *user)
 /* Return the mock monotonic clock. */
 static uint32_t clock_ms(void *user)
 {
-    return ((mock_t *)user)->now;
+    mock_t *m = user;
+    ++m->clock_calls;
+    return m->now;
 }
 
 /* Initialize a fresh transaction with all mandatory callbacks. */
@@ -88,8 +91,11 @@ static void setup(as608_transaction_t *ctx, mock_t *mock)
 static as608_transaction_result_t step(as608_transaction_t *ctx, mock_t *mock)
 {
     const size_t calls = mock->calls;
+    const size_t clock_calls = mock->clock_calls;
     const as608_transaction_result_t result = as608_transaction_process(ctx);
     assert(mock->calls - calls <= 1U);
+    assert(mock->clock_calls - clock_calls == 1U);
+    assert((result.event == AS608_TXN_FAULT) == (result.status != AS608_STATUS_OK));
     return result;
 }
 
@@ -308,6 +314,115 @@ static void test_port_faults(void) {
     assert(result.event == AS608_TXN_FAULT && result.status == AS608_STATUS_IO_ERROR);
 }
 
+/* Verify the explicit receive address is phase-local, never a wildcard. */
+static void test_receive_address(void) {
+    mock_t mock = {.burst = 12U};
+    as608_transaction_t txn;
+    setup(&txn, &mock);
+    prepare_rx(&mock);
+    mock.rx[2] = 0x12U;
+    mock.rx[3] = 0x34U;
+    mock.rx[4] = 0x56U;
+    mock.rx[5] = 0x78U;
+    const uint32_t started = txn.started_ms;
+    as608_transaction_receive_at(&txn, 1U, UINT32_C(0x12345678));
+    assert(mock.calls == 0U && mock.clock_calls == 1U);
+    assert(txn.config.device_address == AS608_DEFAULT_ADDRESS && txn.started_ms == started);
+    assert(run(&txn, &mock).event == AS608_TXN_RECEIVED);
+    const as608_transaction_frame_t view = as608_transaction_received(&txn);
+    assert(view.data == txn.rx_body && view.length == 1U && view.data[0] == 0x42U);
+
+    mock.rx_offset = 0U;
+    as608_transaction_receive(&txn, 1U);
+    as608_transaction_result_t result = run(&txn, &mock);
+    assert(result.event == AS608_TXN_FAULT && result.status == AS608_STATUS_FRAME_ERROR);
+    assert(mock.rx_offset == 9U);
+
+    /* This fixture starts a fresh simulated link after the fault. */
+    as608_transaction_init(&txn, &txn.config);
+    assert(txn.config.device_address == AS608_DEFAULT_ADDRESS);
+    prepare_rx(&mock);
+    as608_transaction_begin(&txn);
+    as608_transaction_receive(&txn, 1U);
+    assert(run(&txn, &mock).event == AS608_TXN_RECEIVED);
+}
+
+/* Exercise the storage bound independently of the command-specific limit. */
+static void test_receive_bounds(void) {
+    const uint16_t lengths[] = {0U, 256U, 257U};
+    const size_t limits[] = {0U, 255U, 256U, 512U};
+    for (size_t i = 0U; i < sizeof(lengths) / sizeof(lengths[0]); ++i) {
+        for (size_t j = 0U; j < sizeof(limits) / sizeof(limits[0]); ++j) {
+            mock_t mock = {.burst = 17U};
+            as608_transaction_t txn;
+            setup(&txn, &mock);
+            const uint16_t len = lengths[i];
+            const uint16_t wire_len = (uint16_t)(len + 2U);
+            const uint8_t header[] = {0xEFU, 1U, 0xFFU, 0xFFU, 0xFFU, 0xFFU,
+                                      8U, (uint8_t)(wire_len >> 8U), (uint8_t)wire_len};
+            (void)memcpy(mock.rx, header, sizeof(header));
+            mock.rx_length = sizeof(header);
+            if (len <= 256U) {
+                uint32_t sum = 8U + header[7] + header[8];
+                for (size_t n = 0U; n < len; ++n) {
+                    mock.rx[9U + n] = (uint8_t)(n * 19U);
+                    sum += mock.rx[9U + n];
+                }
+                mock.rx[9U + len] = (uint8_t)(sum >> 8U);
+                mock.rx[10U + len] = (uint8_t)sum;
+                mock.rx_length = 11U + len;
+            }
+            as608_transaction_receive(&txn, limits[j]);
+            const as608_transaction_result_t result = run(&txn, &mock);
+            if (len > 256U || len > limits[j]) {
+                assert(result.event == AS608_TXN_FAULT);
+                assert(result.status == (len > 256U ? AS608_STATUS_FRAME_ERROR :
+                                                     AS608_STATUS_UNEXPECTED_REPLY));
+                assert(mock.rx_offset == 9U);
+            } else {
+                assert(result.event == AS608_TXN_RECEIVED);
+                const as608_transaction_frame_t view = as608_transaction_received(&txn);
+                assert(view.kind == AS608_PACKET_END_DATA && view.length == len);
+                assert(memcmp(view.data, mock.rx + 9U, len) == 0);
+                assert(mock.rx_offset == mock.rx_length);
+            }
+        }
+    }
+}
+
+/* Verify preparation copies a maximum frame and rejects invalid lengths. */
+static void test_send_bounds(void) {
+    mock_t mock = {.burst = 23U};
+    as608_transaction_t txn;
+    setup(&txn, &mock);
+    uint8_t bytes[256U];
+    (void)memset(bytes, 0xA5, sizeof(bytes));
+    as608_transaction_frame_t frame = {AS608_PACKET_END_DATA, bytes, 257U};
+    assert(as608_transaction_send(&txn, &frame) == AS608_STATUS_INVALID_ARG);
+    frame.length = 1U;
+    frame.data = NULL;
+    assert(as608_transaction_send(&txn, &frame) == AS608_STATUS_INVALID_ARG);
+    frame.length = sizeof(bytes);
+    frame.data = bytes;
+    assert(as608_transaction_send(&txn, &frame) == AS608_STATUS_OK);
+    assert(mock.calls == 0U && mock.clock_calls == 1U);
+    (void)memset(bytes, 0U, sizeof(bytes));
+    assert(run(&txn, &mock).event == AS608_TXN_SENT);
+    assert(mock.tx_length == 267U && mock.tx[6] == 8U);
+    assert(mock.tx[7] == 1U && mock.tx[8] == 2U);
+    for (size_t i = 9U; i < 265U; ++i) {
+        assert(mock.tx[i] == 0xA5U);
+    }
+    assert(mock.tx[265] == 0xA5U && mock.tx[266] == 0x0BU);
+
+    mock.tx_length = 0U;
+    frame.data = NULL;
+    frame.length = 0U;
+    assert(as608_transaction_send(&txn, &frame) == AS608_STATUS_OK);
+    assert(run(&txn, &mock).event == AS608_TXN_SENT);
+    assert(mock.tx_length == 11U && mock.tx[8] == 2U && mock.tx[10] == 10U);
+}
+
 int main(void)
 {
     test_config_validation();
@@ -316,6 +431,9 @@ int main(void)
     test_shared_deadline();
     test_port_queue();
     test_port_faults();
+    test_receive_address();
+    test_receive_bounds();
+    test_send_bounds();
     puts("as608 transaction tests: PASS");
     return 0;
 }

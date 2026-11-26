@@ -1,5 +1,21 @@
-/** @file as608_transaction.h
- * @brief Private, command-independent cooperative packet transport.
+/**
+ * @file as608_transaction.h
+ * @brief Internal, command-independent cooperative packet transport.
+ *
+ * @details Owns fixed frame storage, partial UART I/O and one absolute
+ * job timeout budget measured from started_ms. No heap, command opcode
+ * interpretation, sensor ACK interpretation or automatic resynchronization.
+ * The command layer owns admission, sequencing, completion and quarantine.
+ *
+ * Calls on a context must be serialized. Internal entry points assume
+ * valid pointers and lifecycle preconditions unless stated otherwise.
+ * A phase may be armed only while no previous phase is active. After
+ * SENT, RECEIVED or DRAINED, schedule the next phase or finish the job;
+ * after FAULT, quarantine and recover externally. Never poll an idle
+ * transaction or reinitialize it to bypass physical recovery.
+ *
+ * @see as608_packet.h
+ * @see as608_port.h
  */
 #ifndef AS608_TRANSACTION_H
 #define AS608_TRANSACTION_H
@@ -13,80 +29,188 @@
 extern "C" {
 #endif
 
-/** @brief Maximum payload per transport frame supported by the driver. */
+/**
+ * @brief Fixed maximum payload stored in one transport frame.
+ * @details 256 payload bytes; excludes header and checksum. This is a
+ * storage bound, not the sensor's negotiated packet size or total stream
+ * length. A command-specific RX limit may be smaller or larger than
+ * this bound, but no single received payload may exceed it.
+ */
 #define AS608_TRANSACTION_MAX_PAYLOAD_BYTES ((size_t)256U)
 
-/** @brief Transport and timeout configuration, copied by as608_init(). */
+/** @brief Transport configuration, copied by as608_init(). */
 typedef struct {
-    as608_port_t port;
-    uint32_t device_address;
-    uint32_t timeout_ms;
+    as608_port_t port;       /**< Four mandatory callbacks and borrowed user state. */
+    uint32_t device_address; /**< Exact configured TX and default RX address. */
+    uint32_t timeout_ms;     /**< Whole-job budget, 1..AS608_MAX_TIMEOUT_MS. */
 } as608_config_t;
 
-/** @brief Caller-owned transport context, independent of command state. */
+/**
+ * @brief Caller-owned transport state, independent of command semantics.
+ * @details Storage is embedded so no dynamic allocation is required.
+ * Fields are internal except configuration supplied at initialization;
+ * the command layer uses started_ms for cooperative source/wait phases
+ * and rx_address for address provisioning. Application code must not
+ * modify live state or copy an active context. Layout is ABI-dependent.
+ * Accepted TX bytes are owned by the port, not by this context.
+ */
 typedef struct {
-    as608_config_t config;
-    uint32_t started_ms;
-    uint8_t wire_phase;
+    as608_config_t config;  /**< Retained configuration. */
+    uint32_t started_ms;    /**< Original job tick, modulo 2^32. */
+    uint8_t wire_phase;     /**< Private transport state. */
     uint8_t tx_frame[AS608_TRANSACTION_MAX_PAYLOAD_BYTES + AS608_PACKET_OVERHEAD_BYTES];
-    size_t tx_len;
-    size_t tx_pos;
+    size_t tx_len;          /**< Complete encoded TX frame length. */
+    size_t tx_pos;          /**< Accepted prefix length; 0..tx_len. */
     uint8_t rx_header[AS608_PACKET_HEADER_BYTES];
-    size_t rx_header_pos;
+    size_t rx_header_pos;   /**< Received header bytes. */
     uint8_t rx_body[AS608_TRANSACTION_MAX_PAYLOAD_BYTES + AS608_PACKET_CHECKSUM_BYTES];
-    size_t rx_body_len;
-    size_t rx_body_pos;
-    uint8_t rx_kind;
-    size_t rx_payload_len;
-    size_t rx_limit;
-    uint32_t rx_address;
+    size_t rx_body_len;     /**< Expected payload plus checksum. */
+    size_t rx_body_pos;     /**< Received body bytes; 0..rx_body_len. */
+    uint8_t rx_kind;        /**< Validated raw packet identifier. */
+    size_t rx_payload_len;  /**< Decoded payload length, excluding checksum. */
+    size_t rx_limit;        /**< Inclusive caller-supplied payload bound. */
+    uint32_t rx_address;    /**< Exact expected address for the receive phase. */
 } as608_transaction_t;
 
+/**
+ * @brief Host frame descriptor; not a wire representation.
+ * @details Send borrows data only during the call and copies its contents.
+ * A received descriptor is a read-only view of context-owned RX storage.
+ * length excludes header and checksum in either direction.
+ */
 typedef struct {
     as608_packet_kind_t kind;
     const uint8_t *data;
     size_t length;
 } as608_transaction_frame_t;
 
+/** @brief Result of one cooperative transport poll. */
 typedef enum {
-    AS608_TXN_PENDING = 0,
-    AS608_TXN_SENT,
-    AS608_TXN_RECEIVED,
-    AS608_TXN_DRAINED,
-    AS608_TXN_FAULT
+    AS608_TXN_PENDING  = 0, /**< Phase active; no terminal event yet. */
+    AS608_TXN_SENT     = 1, /**< Entire frame accepted by port; not physical TX completion. */
+    AS608_TXN_RECEIVED = 2, /**< Complete structurally valid, checksum-verified RX frame. */
+    AS608_TXN_DRAINED  = 3, /**< Port reports physical TX completion. */
+    AS608_TXN_FAULT    = 4  /**< Host error; external recovery required. */
 } as608_transaction_event_t;
 
+/**
+ * @brief Transport event and associated host status.
+ * @note Non-fault events carry AS608_STATUS_OK. FAULT carries a host
+ * error; no sensor confirmation code is interpreted here.
+ */
 typedef struct {
     as608_transaction_event_t event;
     as608_status_t status;
 } as608_transaction_result_t;
 
-/* Internal entry points; command layer owns job admission and lifecycle.
- * The deadline is armed exactly once per job, never per packet.
- * Send copies the payload. Receive limit excludes checksum bytes.
- * Each process call performs at most one UART callback plus clock read.
- * On a terminal event the command layer must schedule the next phase
- * or finish/quarantine the job before calling process again.
+/**
+ * @brief Validate configuration without modifying it or invoking callbacks.
+ * @param[in] config Configuration pointer; NULL is permitted and rejected.
+ * @return true if all four callbacks exist and timeout_ms is in range.
+ * @note Any uint32_t address and a NULL port.user are representable.
+ * Callback behavior and actual sensor settings cannot be validated here.
  */
-/** @brief Validate all transport callbacks and the deadline budget. */
 bool as608_transaction_config_valid(const as608_config_t *config);
 
-/** @brief Initialize fresh transport storage, copying its configuration.
- * @pre txn != NULL, config_valid(config), and a fresh physical link epoch.
- * Never use this to bypass command-layer quarantine.
+/**
+ * @brief Initialize transport storage and copy configuration.
+ * @param[out] txn Writable context.
+ * @param[in] config Valid configuration; may alias txn->config.
+ * @pre Both pointers valid; config_valid(config); fresh physical link epoch.
+ * No active job or unhandled accepted port data.
+ * @post Context initialized in idle phase; no callback invoked.
+ * @warning Does not flush UART, stop DMA or recover the sensor. Never
+ * use initialization to bypass command-layer quarantine.
  */
 void as608_transaction_init(as608_transaction_t *txn, const as608_config_t *config);
 
+/**
+ * @brief Record the original job start tick using one clock callback.
+ * @param[in,out] txn Initialized context.
+ * @pre Called exactly once for a newly admitted job, before its first
+ * process call. The first TX frame may already be prepared.
+ * @post started_ms updated; wire phase and frame storage unchanged.
+ * @warning Do not call between frames or during an active job.
+ */
 void as608_transaction_begin(as608_transaction_t *txn);
+
+/**
+ * @brief Encode and queue one frame in context-owned TX storage.
+ * @param[in,out] txn Initialized idle-phase context.
+ * @param[in] frame Readable descriptor with a valid packet kind.
+ * Nonzero length requires readable data of that extent; zero permits NULL.
+ * @retval AS608_STATUS_OK Frame prepared; no UART callback invoked.
+ * @retval AS608_STATUS_INVALID_ARG Invalid payload size, missing nonempty
+ * payload or unsupported encoded packet kind.
+ * @pre Pointers valid; frame and payload do not overlap TX storage or
+ * fields modified during preparation. Caller chooses valid TX direction
+ * and semantic lengths. No earlier transport phase is active.
+ * @post On success the complete frame is copied, TX phase armed, and
+ * the input storage may be reused. The original deadline is unchanged.
+ * @note The actual UART transmission occurs in process calls.
+ */
 as608_status_t as608_transaction_send(as608_transaction_t *txn,
                                     const as608_transaction_frame_t *frame);
+
+/**
+ * @brief Arm one receive phase using the configured device address.
+ * @param[in,out] txn Initialized idle-phase context.
+ * @param[in] limit Inclusive payload bound, excluding checksum.
+ * Zero allows only a structurally empty payload. Values above 256 are
+ * allowed but do not increase the transport storage bound.
+ * @pre No active phase; consume any previous received view first.
+ * @post RX counters reset; no callbacks invoked; deadline unchanged.
+ */
 void as608_transaction_receive(as608_transaction_t *txn, size_t limit);
-/** @brief Arm one receive phase with an exact address, without changing config. */
+
+/**
+ * @brief Arm one receive phase using an exact explicit address.
+ * @param[in,out] txn Initialized idle-phase context.
+ * @param[in] limit Inclusive payload bound, as in receive().
+ * @param[in] address Exact expected address, not a wildcard.
+ * @pre Same phase and view preconditions as receive().
+ * @post Only the receive phase address changes; config.device_address
+ * remains unchanged. The next ordinary receive uses the configured address.
+ * @note Used for initial address provisioning; command layer decides
+ * whether to commit the new address after a valid sensor ACK.
+ */
 void as608_transaction_receive_at(as608_transaction_t *txn, size_t limit, uint32_t address);
+
+/**
+ * @brief Arm physical TX completion polling.
+ * @param[in,out] txn Initialized idle-phase context.
+ * @pre All intended frame bytes accepted by port; no active phase.
+ * @post Drain phase armed; no callback invoked; deadline unchanged.
+ * @note DRAINED does not establish sensor receipt or flash success.
+ */
 void as608_transaction_drain(as608_transaction_t *txn);
+
+/**
+ * @brief Advance one active transport phase without blocking.
+ * @param[in,out] txn Initialized context with an armed phase and job deadline.
+ * @return PENDING, SENT, RECEIVED, DRAINED or FAULT with host status.
+ * @details Reads the clock once before any UART callback. On deadline
+ * expiration returns FAULT/TIMEOUT without UART I/O. Otherwise invokes
+ * at most one port I/O callback. RX validates start, exact address,
+ * kind (ACK/DATA/END_DATA), storage bound, caller limit and checksum.
+ * Command-specific ACK meanings and lengths are not checked here.
+ * @post Non-PENDING events leave the wire phase idle. The caller must
+ * schedule the next phase or finish; FAULT requires quarantine.
+ * @warning No retry, byte skipping, flush or resynchronization. The
+ * port may still own accepted TX bytes after a terminal event.
+ */
 as608_transaction_result_t as608_transaction_process(as608_transaction_t *txn);
 
-/* View valid only after RECEIVED, until the next receive/reset. */
+/**
+ * @brief Borrow the last validated RX payload.
+ * @param[in] txn Context immediately following a RECEIVED event.
+ * @return Descriptor pointing into the context's RX body, excluding checksum.
+ * @pre A RECEIVED event has just been observed; not valid after a fault
+ * or while a receive is incomplete. This accessor does not validate state.
+ * @post No state change or callback.
+ * @warning Read-only borrowed view; consume before the next receive or
+ * context reset. Do not retain it as application-owned output.
+ */
 as608_transaction_frame_t as608_transaction_received(const as608_transaction_t *txn);
 
 #ifdef __cplusplus
