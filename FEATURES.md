@@ -222,3 +222,8 @@ All three planned composite APIs are implemented; verify bitmap bit ordering, ca
 3. Repository: [as608.h](as608.h), [as608.c](as608.c), [as608_transaction.c](as608_transaction.c), [as608_port.h](as608_port.h).
 
 Manual caveats: several entries are reserved or legacy PS1802-specific. Notepad total sizes conflict in the prose (16 × 32-byte page layout gives 512 bytes); ReadSysPara contains a conflicting packet-size code 1 value (WriteReg specifies 64 bytes). Verify these on target. No claim is made that every AS608 module implements every AS60x command.
+
+## Post-rebuild maintenance
+
+- [x] Stage 47: remove unused free-slot test helper; GCC/Clang regression baseline restored.
+- [x] Stage 48: common-type contract review, explicit status values, C11/C++11 requirements and independent compile-time tests. No new wire commands or runtime state.

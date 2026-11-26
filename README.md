@@ -6,7 +6,9 @@ physical sensor. Historical hardware validation: two AS608_QCCF modules on
 STM32F103C8T6, USART1/USART2, 57,600 baud, 8N2; successful 768-byte template
 transfer. The unified non-blocking port still needs hardware validation.
 
-## Incremental API rebuild — active stage 46
+## Completed API rebuild — 46 APIs
+
+Post-rebuild maintenance: stage 48, common-type contract review.
 
 The five lifecycle APIs and forty-one command/job APIs covering thirty-one opcodes (BurnCode experimental) (0x13, 0x0F, 0x1D, 0x1F, 0x16, 0x01, 0x02, 0x03, 0x05, 0x04, 0x07, 0x08, 0x09, 0x06, 0x0C, 0x0D, 0x10, 0x11, 0x1B, 0x0A, 0x0B, 0x1C, 0x0E, 0x17, 0x12, 0x14, 0x15, 0x18, 0x19, 0x1E, 0x1A)
 are currently compiled from as608.c. Process supports simple,
@@ -39,7 +41,9 @@ to the transaction layer without weakening normal address validation.
 
 All 23 baseline APIs and APIs 24–46 are now implemented (BurnCode experimental). CI builds independent packet and
 transaction tests, API 01–46 dedicated tests, and full command/async/fault
-regressions. All 46 planned APIs are linkable; BurnCode remains experimental. Target hardware
+regressions. All 46 planned APIs are linkable; BurnCode remains experimental. The common-type
+header has independent freestanding C11 and C++11 compile-time contract tests;
+status numeric values are unchanged. Target hardware
 validation and the DownChar final-ACK compatibility check remain outstanding.
 
 Baud-rate changes use PS_WriteReg register 4, with the AS608 profile
