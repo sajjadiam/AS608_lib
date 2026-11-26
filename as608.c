@@ -895,6 +895,41 @@ as608_status_t as608_store_template_start(as608_t *ctx, as608_char_buffer_t buff
  * ========================================================================= */
 
 /* =========================================================================
+ * API 20: as608_read_template_start
+ * =========================================================================
+ * Composite PS_LoadChar (0x07) and PS_UpChar (0x08) job.
+ * AS60x Communication Manual V1.0, pp. 15–16.
+ */
+
+/* Validate the load ACK and schedule upload without restarting the job. */
+static as608_progress_t accept_load_ack(as608_t *ctx) {
+    const as608_transaction_frame_t frame = as608_transaction_received(&ctx->transaction);
+
+    if ((frame.kind != AS608_PACKET_ACK) || (frame.length != 1U)) {
+        return quarantine(ctx, AS608_STATUS_UNEXPECTED_REPLY);
+    }
+
+    if (frame.data[0] != AS608_ACK_OK) {
+        return finish(ctx, frame.data[0]);
+    }
+
+    const command_t command = {{CMD_UP_CHAR, AS608_CHAR_BUFFER_1}, 2U, STEP_UP_ACK};
+
+    return next_or_fault(ctx, command_start(ctx, &command));
+}
+
+as608_status_t as608_read_template_start(as608_t *ctx, uint16_t page_id, as608_template_buffer_t *output) {
+    command_t command = page_command(CMD_LOAD_CHAR, AS608_CHAR_BUFFER_1, page_id);
+    command.step = STEP_LOAD_ACK;
+
+    return upload_start(ctx, &command, output);
+}
+
+/* =========================================================================
+ * END API 20
+ * ========================================================================= */
+
+/* =========================================================================
  * API 02: as608_process
  * =========================================================================
  * Keep the process dispatcher after the active command API sections so
@@ -929,6 +964,7 @@ as608_progress_t as608_process(as608_t *ctx) {
 
     switch (ctx->step) {
         case STEP_SIMPLE_ACK:
+        case STEP_LOAD_ACK:
         case STEP_UP_ACK:
         case STEP_DOWN_ACK:
         case STEP_INFO_ACK: {
@@ -1010,6 +1046,9 @@ as608_progress_t as608_process(as608_t *ctx) {
                 case STEP_INFO_ACK: {
                     return accept_stream_ack(ctx, STEP_INFO_DATA);
                 }
+                case STEP_LOAD_ACK: {
+                    return accept_load_ack(ctx);
+                }
                 case STEP_UP_ACK: {
                     return accept_stream_ack(ctx, STEP_UP_DATA);
                 }
@@ -1058,14 +1097,6 @@ as608_progress_t as608_process(as608_t *ctx) {
 
 // Remaining command opcodes; migrate into enum as608_command when needed.
 //     CMD_DELETE_CHAR = 0x0C, CMD_EMPTY = 0x0D,
-// 
-// as608_status_t as608_read_template_start(as608_t *ctx, uint16_t page_id,
-//                                        as608_template_buffer_t *output)
-// {
-//     command_t command = page_command(CMD_LOAD_CHAR, AS608_CHAR_BUFFER_1, page_id);
-//     command.step = STEP_LOAD_ACK;
-//     return upload_start(ctx, &command, output);
-// }
 // 
 // as608_status_t as608_write_template_start(as608_t *ctx, uint16_t page_id,
 //                                         const uint8_t *data, size_t length)
@@ -1143,10 +1174,8 @@ as608_progress_t as608_process(as608_t *ctx) {
 //     switch (ctx->step) {
 //     case STEP_SIMPLE_ACK:
 //         return finish(ctx, AS608_ACK_OK);
-//     case STEP_LOAD_ACK: {
-//         const command_t command = {{CMD_UP_CHAR, AS608_CHAR_BUFFER_1}, 2U, STEP_UP_ACK};
-//         return next_or_fault(ctx, command_start(ctx, &command));
-//     }
+//     case STEP_LOAD_ACK:
+//         return accept_load_ack(ctx);
 //     case STEP_UP_ACK:
 //     case STEP_INFO_ACK:
 //         ctx->step = ctx->step == STEP_UP_ACK ? STEP_UP_DATA : STEP_INFO_DATA;

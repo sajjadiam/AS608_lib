@@ -63,3 +63,5 @@ jobs:
           ./build/test_download_template
           ${{ matrix.compiler }} -std=c11 -Wall -Wextra -Werror -pedantic -I. as608_packet.c as608_transaction.c as608.c test_as608_store_template.c -o build/test_store_template
           ./build/test_store_template
+          ${{ matrix.compiler }} -std=c11 -Wall -Wextra -Werror -pedantic -I. as608_packet.c as608_transaction.c as608.c test_as608_read_template.c -o build/test_read_template
+          ./build/test_read_template

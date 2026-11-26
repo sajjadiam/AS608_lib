@@ -234,7 +234,7 @@ as608_status_t as608_init(as608_t *ctx, const as608_config_t *config);
  * @post A valid terminal ACK sets DONE and stores its raw confirmation
  * code. A transport/protocol fault during BUSY sets DESYNCHRONIZED and
  * records the host error; a non-BUSY context is left unchanged.
- * @note At rebuild stage 18, simple, system-parameter, 16-bit result,
+ * @note At rebuild stage 20, simple, system-parameter, 16-bit result,
  * index-table and search ACK phases plus information-page and template
  * upload/download streaming are active.
  * @see as608_get_result
@@ -809,12 +809,48 @@ as608_status_t as608_download_template_start(as608_t *ctx, as608_char_buffer_t b
  */
 as608_status_t as608_store_template_start(as608_t *ctx, as608_char_buffer_t buffer, uint16_t page_id);
 
-/* Incremental rebuild: APIs 01–19 are defined.
+/**
+ * @brief Start reading a flash template into host memory.
+ *
+ * @details Composite host job: PS_LoadChar (0x07) loads PageID into
+ * CharBuffer1, then PS_UpChar (0x08) uploads it after a verified ACK_OK.
+ * One deadline covers both commands and the entire DATA/END_DATA stream.
+ * No flash write, implicit retry, or additional full-template buffer.
+ *
+ * @param[in,out] ctx Initialized caller-owned device context.
+ * @param[in] page_id Flash database slot to read.
+ * @param[in,out] output Caller-owned descriptor; set data and capacity.
+ * @retval AS608_STATUS_OK Job admitted; template not yet available.
+ * @retval AS608_STATUS_INVALID_ARG Null context, output or data,
+ * or capacity below 512 bytes.
+ * @retval AS608_STATUS_NOT_INITIALIZED Context is not initialized.
+ * @retval AS608_STATUS_BUSY Another job owns the context.
+ * @retval AS608_STATUS_RECOVERY_REQUIRED Link is quarantined.
+ * @pre Serialize calls sharing ctx. Choose a PageID within actual
+ * database capacity. Keep output and its data valid, nonoverlapping,
+ * separate from driver storage and unchanged by the caller until
+ * completion or abort. Capacity >= 768 accepts both supported sizes.
+ * @post State becomes BUSY on admission. CharBuffer1 is overwritten
+ * by a successful load. A negative LoadChar ACK prevents UpChar.
+ * A negative ACK in either command leaves output data and length
+ * unchanged. Verified fragments are copied directly; length is committed
+ * only on valid END_DATA totaling 512 or 768 bytes within capacity.
+ * Later faults or abort leave length unchanged but may leave partial data.
+ * @note Check both terminal result fields before using the template.
+ * A valid negative ACK is a terminal sensor result, not a host fault.
+ * This is a host-side composition, not a separate sensor opcode.
+ * @see as608_load_template_start
+ * @see as608_upload_template_start
+ * @see as608_process
+ * @see as608_get_result
+ * @see AS60x Communication Manual V1.0, printed pages 15–16.
+ */
+as608_status_t as608_read_template_start(as608_t *ctx, uint16_t page_id, as608_template_buffer_t *output);
+
+/* Incremental rebuild: APIs 01–20 are defined.
  * The following API declarations remain contracts until restored.
  * See FEATURES.md.
  */
-as608_status_t as608_read_template_start(as608_t *ctx, uint16_t page_id,
-                                       as608_template_buffer_t *output);
 as608_status_t as608_write_template_start(as608_t *ctx, uint16_t page_id,
                                         const uint8_t *data, size_t length);
 as608_status_t as608_delete_templates_start(as608_t *ctx, uint16_t start_page,
