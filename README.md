@@ -6,9 +6,9 @@ physical sensor. Historical hardware validation: two AS608_QCCF modules on
 STM32F103C8T6, USART1/USART2, 57,600 baud, 8N2; successful 768-byte template
 transfer. The unified non-blocking port still needs hardware validation.
 
-## Incremental API rebuild — active stage 41
+## Incremental API rebuild — active stage 42
 
-The five lifecycle APIs and thirty-six command/job APIs covering twenty-nine opcodes (0x13, 0x0F, 0x1D, 0x1F, 0x16, 0x01, 0x02, 0x03, 0x05, 0x04, 0x07, 0x08, 0x09, 0x06, 0x0C, 0x0D, 0x10, 0x11, 0x1B, 0x0A, 0x0B, 0x1C, 0x0E, 0x17, 0x12, 0x14, 0x15, 0x18, 0x19)
+The five lifecycle APIs and thirty-seven command/job APIs covering thirty opcodes (0x13, 0x0F, 0x1D, 0x1F, 0x16, 0x01, 0x02, 0x03, 0x05, 0x04, 0x07, 0x08, 0x09, 0x06, 0x0C, 0x0D, 0x10, 0x11, 0x1B, 0x0A, 0x0B, 0x1C, 0x0E, 0x17, 0x12, 0x14, 0x15, 0x18, 0x19, 0x1E)
 are currently compiled from as608.c. Process supports simple,
 system-parameter, 16-bit result, search and index-table ACK phases, plus the
 512-byte information-page, 512/768-byte template upload/download and 256-byte feature upload/download and exact-length image upload/download streams.
@@ -25,8 +25,8 @@ above its definition; follow this convention for newly added helpers.
 The packet layer is unchanged. API 39 adds an exact per-receive address
 to the transaction layer without weakening normal address validation.
 
-All 23 baseline APIs and APIs 24–41 are now implemented. CI builds independent packet and
-transaction tests, API 01–41 dedicated tests, and full command/async/fault
+All 23 baseline APIs and APIs 24–42 are now implemented. CI builds independent packet and
+transaction tests, API 01–42 dedicated tests, and full command/async/fault
 regressions. Additional planned APIs are declarations only. Target hardware
 validation and the DownChar final-ACK compatibility check remain outstanding.
 
@@ -62,6 +62,10 @@ no automatic retry or power-loss atomicity is promised. Verify on target.
 ReadNotepad (0x19) shares the fixed 32-byte result ACK handler with
 ReadIndexTable. Only a complete valid ACK_OK changes page->data;
 the page index is never modified. Readback is a separate job.
+UserGPIO (0x1E) follows the reserved command 30 in the Chinese AS60x
+manual. Only selectors 0/1 and echoed states 0/1 are supported. Verify
+firmware and physical pin mapping before use; an echo is not a pin
+voltage measurement. No automatic probing or retry.
 
 ## Flat project structure
 
@@ -114,6 +118,7 @@ AS608_lib/
 ├── test_as608_set_device_address.c Active API 39 provisioning tests
 ├── test_as608_write_notepad.c   Active API 40 notepad write tests
 ├── test_as608_read_notepad.c    Active API 41 notepad read tests
+├── test_as608_write_user_gpio.c Active API 42 GPIO echo tests
 ├── test_as608_transaction.c      Independent transport tests
 ├── test_as608_packet.c           Packet tests
 ├── test_as608_commands.c         Full command and template regression tests
@@ -320,7 +325,7 @@ cc -std=c11 -Wall -Wextra -Werror -pedantic -I. as608_packet.c as608_transaction
 
 See [FEATURES.md](FEATURES.md) for the 31 documented AS60x commands and
 their implementation status. The normal header exposes the implemented
-non-blocking API. The additional, proposed contracts for the 2 missing
+non-blocking API. The additional, proposed contracts for the remaining
 opcodes and selected composite operations are grouped under
 `AS608_DECLARE_PLANNED_API` in `as608.h`. Defining the macro before inclusion
 only reveals declarations for review; it does not provide implementations,

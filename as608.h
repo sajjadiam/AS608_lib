@@ -157,6 +157,19 @@ typedef struct {
     uint8_t data[AS608_NOTEPAD_PAGE_BYTES];
 } as608_notepad_page_t;
 
+/** Documented GPIO selector, not an MCU pin number. */
+typedef enum {
+    AS608_USER_GPIO_0 = 0,
+    AS608_USER_GPIO_1 = 1
+} as608_user_gpio_t;
+
+/** GPIO request and echoed state from a successful reply. */
+typedef struct {
+    as608_user_gpio_t pin;
+    bool level;        /**< Requested output level. */
+    bool actual_level; /**< Echoed output state, success only. */
+} as608_gpio_request_t;
+
 /** @brief Successful fingerprint search output. */
 typedef struct {
     uint16_t page_id; /**< Matched database position. */
@@ -322,7 +335,7 @@ as608_status_t as608_init(as608_t *ctx, const as608_config_t *config);
  * @post A valid terminal ACK sets DONE and stores its raw confirmation
  * code. A transport/protocol fault during BUSY sets DESYNCHRONIZED and
  * records the host error; a non-BUSY context is left unchanged.
- * @note At rebuild stage 41, simple, system-parameter, 16/32-bit result,
+ * @note At rebuild stage 42, simple, GPIO, system-parameter, 16/32-bit result,
  * 32-byte index/notepad and search ACK phases plus information-page, template,
  * feature and image upload streaming are active. Template, feature and
  * image download streaming is also supported.
@@ -1644,6 +1657,40 @@ as608_status_t as608_write_notepad_start(as608_t *ctx, const as608_notepad_page_
  */
 as608_status_t as608_read_notepad_start(as608_t *ctx, as608_notepad_page_t *page);
 
+/**
+ * @brief Start setting a sensor user GPIO output (opcode 0x1E).
+ *
+ * @details The Chinese AS60x SOC Communication Manual V1.0, command
+ * 30, marks this command reserved but specifies selector 0/1 and
+ * level 0/1, with a confirmation and echoed state on success.
+ * The English MCU User's Guide omits the detailed command.
+ *
+ * @param[in,out] ctx Initialized caller-owned device context.
+ * @param[in,out] request GPIO selector, requested and echoed levels.
+ * @retval AS608_STATUS_OK Job admitted; GPIO state not yet confirmed.
+ * @retval AS608_STATUS_INVALID_ARG Null context/request or invalid selector.
+ * @retval AS608_STATUS_NOT_INITIALIZED Context is not initialized.
+ * @retval AS608_STATUS_BUSY Another job owns the context.
+ * @retval AS608_STATUS_RECOVERY_REQUIRED Link is quarantined.
+ * @pre Serialize calls on ctx. Keep request valid, separate from driver
+ * storage, and its input fields unchanged through termination or abort.
+ * Before calling, verify firmware support, physical pin mapping, voltage
+ * levels and attached circuitry. The selector is not a physical pin number.
+ * @post Only a checksum-verified ACK_OK of length 2 with echoed state
+ * 0 or 1 changes actual_level. Negative ACKs (one or two bytes) retain
+ * their raw confirmation and do not modify output. All faults, aborts
+ * and rejected admissions leave the output unchanged.
+ * @warning Echoed state need not equal the requested level and is not
+ * an independent measurement of the physical pin. A timeout or abort
+ * may leave the physical state unknown. No automatic retry or probing.
+ * @note ACK 0x1A indicates invalid input for this command. Check both
+ * result fields and compare echoed/requested levels if required.
+ * @see as608_process
+ * @see as608_get_result
+ * @see AS60x SOC Communication Manual V1.0 (Chinese edition), command 30.
+ */
+as608_status_t as608_write_user_gpio_start(as608_t *ctx, as608_gpio_request_t *request);
+
 /* -------------------------------------------------------------------------
  * Planned API contracts (declarations only; NOT implemented or linkable).
  *
@@ -1671,19 +1718,6 @@ typedef enum {
     AS608_BURN_FULL_FIRMWARE = 1
 } as608_burn_mode_t;
 
-/** Documented GPIO selector, not an MCU pin number. */
-typedef enum {
-    AS608_USER_GPIO_0 = 0,
-    AS608_USER_GPIO_1 = 1
-} as608_user_gpio_t;
-
-/** GPIO request and echoed state from a successful reply. */
-typedef struct {
-    as608_user_gpio_t pin;
-    bool level;        /**< Requested output level. */
-    bool actual_level; /**< Echoed output state, success only. */
-} as608_gpio_request_t;
-
 /** Firmware request. Caller must verify device, image and recovery path.
  * The stream describes the vendor-format image, not arbitrary flash data.
  */
@@ -1709,11 +1743,7 @@ typedef struct {
     uint16_t page_id;
 } as608_free_slot_t;
 
-/* ---- GPIO and firmware maintenance ---- */
-
-/** PS_UserGPIOCommand (0x1E): reserved/variant-specific. */
-as608_status_t as608_write_user_gpio_start(as608_t *ctx,
-                                           as608_gpio_request_t *request);
+/* ---- Firmware maintenance ---- */
 
 /** PS_BurnCode (0x1A): high-risk and firmware-specific.
  * Requires separate target validation and explicit application authorization.

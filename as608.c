@@ -37,6 +37,7 @@ enum as608_command {
     CMD_HIGH_SPEED_SEARCH = 0x1B,
     CMD_GEN_BIN_IMAGE = 0x1C,
     CMD_COUNT = 0x1D,
+    CMD_USER_GPIO = 0x1E,
     CMD_READ_INDEX = 0x1F
 };
 
@@ -70,7 +71,8 @@ enum as608_step {
     STEP_DEVICE_INFO_ACK,
     STEP_DEVICE_INFO_DATA,
     STEP_U32_ACK,
-    STEP_ADDRESS_ACK
+    STEP_ADDRESS_ACK,
+    STEP_GPIO_ACK
 };
 
 /* =========================================================================
@@ -1612,6 +1614,48 @@ as608_status_t as608_read_notepad_start(as608_t *ctx, as608_notepad_page_t *page
  * ========================================================================= */
 
 /* =========================================================================
+ * API 42: as608_write_user_gpio_start
+ * =========================================================================
+ * PS_UserGPIOCommand (0x1E), AS60x SOC Communication Manual V1.0
+ * (Chinese edition), command 30 (reserved; variant-specific).
+ */
+
+/* Validate the echoed GPIO level before publishing it. */
+static as608_progress_t accept_gpio_ack(as608_t *ctx) {
+    const as608_transaction_frame_t frame = as608_transaction_received(&ctx->transaction);
+
+    if ((frame.kind != AS608_PACKET_ACK) || ((frame.length != 1U) && (frame.length != 2U))) {
+        return quarantine(ctx, AS608_STATUS_UNEXPECTED_REPLY);
+    }
+
+    if (frame.data[0] != AS608_ACK_OK) {
+        return finish(ctx, frame.data[0]);
+    }
+
+    if ((frame.length != 2U) || (frame.data[1] > 1U) || !ctx->reply_output) {
+        return quarantine(ctx, AS608_STATUS_UNEXPECTED_REPLY);
+    }
+
+    *(bool *)ctx->reply_output = (frame.data[1] != 0U);
+    return finish(ctx, AS608_ACK_OK);
+}
+
+as608_status_t as608_write_user_gpio_start(as608_t *ctx, as608_gpio_request_t *request) {
+    if (!request || ((request->pin != AS608_USER_GPIO_0) && (request->pin != AS608_USER_GPIO_1))) {
+        return AS608_STATUS_INVALID_ARG;
+    }
+
+    const command_t command = {{CMD_USER_GPIO, (uint8_t)request->pin, request->level ? 1U : 0U},
+                               3U, STEP_GPIO_ACK};
+
+    return reply_start(ctx, &command, &request->actual_level);
+}
+
+/* =========================================================================
+ * END API 42
+ * ========================================================================= */
+
+/* =========================================================================
  * API 02: as608_process
  * =========================================================================
  * Keep the process dispatcher after the active command API sections so
@@ -1664,6 +1708,10 @@ as608_progress_t as608_process(as608_t *ctx) {
         case STEP_READ_PARAMS_ACK:
         case STEP_PARAMS_ACK: {
             limit = 17U;
+            break;
+        }
+        case STEP_GPIO_ACK: {
+            limit = 2U;
             break;
         }
         case STEP_U16_ACK: {
@@ -1734,6 +1782,9 @@ as608_progress_t as608_process(as608_t *ctx) {
                 }
                 case STEP_DOWN_ACK: {
                     return accept_download_ack(ctx);
+                }
+                case STEP_GPIO_ACK: {
+                    return accept_gpio_ack(ctx);
                 }
                 case STEP_U16_ACK: {
                     return accept_u16_ack(ctx);
