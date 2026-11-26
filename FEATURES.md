@@ -230,3 +230,4 @@ Manual caveats: several entries are reserved or legacy PS1802-specific. Notepad 
 
 - [x] Stage 49: packet-header contract review; wire versus storage bounds, zero-length framing, exact address validation, checksum and buffer preconditions, independent C11/C++11 compile-time checks. No codec behavior or layout changes.
 - [x] Stage 50: packet codec review, shared big-endian checksum reader, consistent control-flow braces, exhaustive wire length/kind/checksum tests and independent streaming oracle. No public signature or wire-behavior changes.
+- [x] Stage 51: UART port contract review; borrowed-buffer lifetime, partial I/O, ISR/DMA ownership, latched errors, physical TX drain, coherent clock and independent header/transport tests. No callback signature or runtime core change. Target port validation pending.

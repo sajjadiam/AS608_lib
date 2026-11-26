@@ -22,6 +22,8 @@ jobs:
           ${{ matrix.compiler }} -x c++ -std=c++11 -Wall -Wextra -Werror -pedantic -I. -fsyntax-only test_as608_types.c
           ${{ matrix.compiler }} -std=c11 -Wall -Wextra -Werror -pedantic -ffreestanding -I. -fsyntax-only test_as608_packet_header.c
           ${{ matrix.compiler }} -x c++ -std=c++11 -Wall -Wextra -Werror -pedantic -I. -fsyntax-only test_as608_packet_header.c
+          ${{ matrix.compiler }} -std=c11 -Wall -Wextra -Werror -pedantic -ffreestanding -I. -fsyntax-only test_as608_port_header.c
+          ${{ matrix.compiler }} -x c++ -std=c++11 -Wall -Wextra -Werror -pedantic -I. -fsyntax-only test_as608_port_header.c
           printf '#include "as608.h"\n' | ${{ matrix.compiler }} -std=c11 -Wall -Wextra -Werror -pedantic -I. -DAS608_DECLARE_PLANNED_API -x c -fsyntax-only -
           ${{ matrix.compiler }} -std=c11 -Wall -Wextra -Werror -pedantic -I. as608_packet.c as608_transaction.c test_as608_transaction.c -o build/test_transaction
           ./build/test_transaction
