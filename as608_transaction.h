@@ -39,6 +39,7 @@ typedef struct {
     uint8_t rx_kind;
     size_t rx_payload_len;
     size_t rx_limit;
+    uint32_t rx_address;
 } as608_transaction_t;
 
 typedef struct {
@@ -80,6 +81,8 @@ void as608_transaction_begin(as608_transaction_t *txn);
 as608_status_t as608_transaction_send(as608_transaction_t *txn,
                                     const as608_transaction_frame_t *frame);
 void as608_transaction_receive(as608_transaction_t *txn, size_t limit);
+/** @brief Arm one receive phase with an exact address, without changing config. */
+void as608_transaction_receive_at(as608_transaction_t *txn, size_t limit, uint32_t address);
 void as608_transaction_drain(as608_transaction_t *txn);
 as608_transaction_result_t as608_transaction_process(as608_transaction_t *txn);
 

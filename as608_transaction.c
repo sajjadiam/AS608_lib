@@ -70,6 +70,12 @@ as608_status_t as608_transaction_send(as608_transaction_t *txn,
 
 void as608_transaction_receive(as608_transaction_t *txn, size_t limit)
 {
+    as608_transaction_receive_at(txn, limit, txn->config.device_address);
+}
+
+void as608_transaction_receive_at(as608_transaction_t *txn, size_t limit, uint32_t address)
+{
+    txn->rx_address = address;
     txn->rx_limit = limit;
     txn->rx_header_pos = 0U;
     txn->rx_body_pos = 0U;
@@ -86,7 +92,7 @@ static as608_status_t parse_header(as608_transaction_t *txn)
 {
     as608_packet_header_t header;
     const as608_status_t status = as608_packet_decode_header(
-        txn->rx_header, txn->config.device_address,
+        txn->rx_header, txn->rx_address,
         sizeof(txn->rx_body) - AS608_PACKET_CHECKSUM_BYTES, &header);
     if (status != AS608_STATUS_OK) return status;
     if (header.kind != (uint8_t)AS608_PACKET_ACK &&
@@ -108,7 +114,7 @@ static as608_status_t parse_header(as608_transaction_t *txn)
 static bool checksum_valid(const as608_transaction_t *txn)
 {
     const as608_packet_header_t header = {
-        txn->config.device_address, txn->rx_kind,
+        txn->rx_address, txn->rx_kind,
         (uint16_t)txn->rx_payload_len
     };
     const uint16_t checksum = as608_packet_checksum_update(

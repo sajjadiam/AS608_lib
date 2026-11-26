@@ -313,7 +313,7 @@ as608_status_t as608_init(as608_t *ctx, const as608_config_t *config);
  * @post A valid terminal ACK sets DONE and stores its raw confirmation
  * code. A transport/protocol fault during BUSY sets DESYNCHRONIZED and
  * records the host error; a non-BUSY context is left unchanged.
- * @note At rebuild stage 38, simple, system-parameter, 16/32-bit result,
+ * @note At rebuild stage 39, simple, system-parameter, 16/32-bit result,
  * index-table and search ACK phases plus information-page, template,
  * feature and image upload streaming are active. Template, feature and
  * image download streaming is also supported.
@@ -1532,6 +1532,47 @@ as608_status_t as608_set_password_start(as608_t *ctx, uint32_t password);
  */
 as608_status_t as608_get_random_code_start(as608_t *ctx, uint32_t *code);
 
+/**
+ * @brief Start initial sensor address provisioning (PS_SetChipAddr, 0x15).
+ *
+ * @details The command uses the default address 0xFFFFFFFF and carries
+ * the new 32-bit address in big-endian order. The reply must carry
+ * the requested new address, one confirmation byte and a valid checksum.
+ * The manual describes a fixed address after provisioning; arbitrary
+ * reassignment is not supported by this API.
+ *
+ * @param[in,out] ctx Initialized caller-owned device context.
+ * @param[in] address Requested non-default device address.
+ * @retval AS608_STATUS_OK Job admitted; address not yet changed locally.
+ * @retval AS608_STATUS_INVALID_ARG Null context, non-default configured
+ * address, or requested default address.
+ * @retval AS608_STATUS_NOT_INITIALIZED Context is not initialized.
+ * @retval AS608_STATUS_BUSY Another job owns the context.
+ * @retval AS608_STATUS_RECOVERY_REQUIRED Link is quarantined.
+ * @pre Serialize calls on ctx. Use an isolated, physically unprovisioned
+ * sensor; verify firmware transition behavior and retain a recovery path.
+ * @post Only a checksum-valid ACK_OK at the requested address commits
+ * the local configured address. Subsequent jobs use the new address.
+ * Any other reply, timeout or abort leaves the old local address and
+ * quarantines the link. In this transition-specific conservative profile
+ * even a negative ACK at the new address is an unexpected reply.
+ * @warning The address is excluded from the additive checksum. This
+ * is not authenticated provisioning. A missing or invalid reply does
+ * not prove the sensor kept its old address. Do not retry automatically.
+ * After an uncertain transition, establish the actual sensor address
+ * externally; if it differs from the retained config, initialize a fresh
+ * zeroed context with the verified address after physical recovery.
+ * as608_confirm_reset() alone retains the previous configured address.
+ * @note ACK_OK does not independently prove flash persistence. Verify
+ * via ReadSysPara at the new address; no automatic follow-up is sent.
+ * @see as608_read_parameters_start
+ * @see as608_confirm_reset
+ * @see as608_process
+ * @see as608_get_result
+ * @see AS60x MCU User's Guide V1.0, printed pages 26–27.
+ */
+as608_status_t as608_set_device_address_start(as608_t *ctx, uint32_t address);
+
 /* -------------------------------------------------------------------------
  * Planned API contracts (declarations only; NOT implemented or linkable).
  *
@@ -1606,15 +1647,6 @@ typedef struct {
     bool found;
     uint16_t page_id;
 } as608_free_slot_t;
-
-/* ---- Address provisioning ---- */
-
-/** PS_SetChipAddr (0x15): address provisioning, not arbitrary reassignment.
- * Manual p. 23 specifies a default-address command and a new-address reply.
- * Require verified firmware transition rules; commit the local address
- * only on a validated successful ACK. An uncertain transition quarantines.
- */
-as608_status_t as608_set_device_address_start(as608_t *ctx, uint32_t address);
 
 /* ---- User flash, GPIO and firmware maintenance ---- */
 

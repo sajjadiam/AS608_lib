@@ -29,6 +29,7 @@ enum as608_command {
     CMD_SET_PASSWORD = 0x12,
     CMD_VERIFY_PASSWORD = 0x13,
     CMD_GET_RANDOM_CODE = 0x14,
+    CMD_SET_ADDRESS = 0x15,
     CMD_READ_INFO = 0x16,
     CMD_PORT_CONTROL = 0x17,
     CMD_HIGH_SPEED_SEARCH = 0x1B,
@@ -66,7 +67,8 @@ enum as608_step {
     STEP_DOWN_SOURCE,
     STEP_DEVICE_INFO_ACK,
     STEP_DEVICE_INFO_DATA,
-    STEP_U32_ACK
+    STEP_U32_ACK,
+    STEP_ADDRESS_ACK
 };
 
 /* =========================================================================
@@ -1508,6 +1510,58 @@ as608_status_t as608_get_random_code_start(as608_t *ctx, uint32_t *code) {
  * ========================================================================= */
 
 /* =========================================================================
+ * API 39: as608_set_device_address_start
+ * =========================================================================
+ * PS_SetChipAddr (0x15), AS60x MCU User's Guide V1.0, pp. 26–27.
+ * Initial provisioning: default-address command, new-address ACK.
+ */
+
+/* Commit the new address only after a verified successful transition ACK. */
+static as608_progress_t accept_address_ack(as608_t *ctx) {
+    const as608_transaction_frame_t frame = as608_transaction_received(&ctx->transaction);
+
+    if ((frame.kind != AS608_PACKET_ACK) || (frame.length != 1U) ||
+        (frame.data[0] != AS608_ACK_OK)) {
+        return quarantine(ctx, AS608_STATUS_UNEXPECTED_REPLY);
+    }
+
+    ctx->transaction.config.device_address = ctx->transaction.rx_address;
+    return finish(ctx, AS608_ACK_OK);
+}
+
+as608_status_t as608_set_device_address_start(as608_t *ctx, uint32_t address) {
+    const as608_status_t allowed = start_allowed(ctx);
+
+    if (allowed != AS608_STATUS_OK) {
+        return allowed;
+    }
+
+    if ((ctx->transaction.config.device_address != AS608_DEFAULT_ADDRESS) ||
+        (address == AS608_DEFAULT_ADDRESS)) {
+        return AS608_STATUS_INVALID_ARG;
+    }
+
+    const command_t command = {{
+        CMD_SET_ADDRESS,
+        (uint8_t)(address >> 24U),
+        (uint8_t)(address >> 16U),
+        (uint8_t)(address >> 8U),
+        (uint8_t)address
+    }, 5U, STEP_ADDRESS_ACK};
+    const as608_status_t status = launch(ctx, &command);
+
+    if (status == AS608_STATUS_OK) {
+        ctx->transaction.rx_address = address;
+    }
+
+    return status;
+}
+
+/* =========================================================================
+ * END API 39
+ * ========================================================================= */
+
+/* =========================================================================
  * API 02: as608_process
  * =========================================================================
  * Keep the process dispatcher after the active command API sections so
@@ -1552,6 +1606,7 @@ as608_progress_t as608_process(as608_t *ctx) {
         case STEP_FEATURE_ACK:
         case STEP_IMAGE_ACK:
         case STEP_DEVICE_INFO_ACK:
+        case STEP_ADDRESS_ACK:
         case STEP_INFO_ACK: {
             limit = 1U;
             break;
@@ -1608,7 +1663,11 @@ as608_progress_t as608_process(as608_t *ctx) {
                 return quarantine(ctx, AS608_STATUS_UNEXPECTED_REPLY);
             }
 
-            as608_transaction_receive(&ctx->transaction, limit);
+            if (ctx->step == STEP_ADDRESS_ACK) {
+                as608_transaction_receive_at(&ctx->transaction, limit, ctx->transaction.rx_address);
+            } else {
+                as608_transaction_receive(&ctx->transaction, limit);
+            }
             return AS608_PENDING;
         }
 
@@ -1631,6 +1690,9 @@ as608_progress_t as608_process(as608_t *ctx) {
                 }
                 case STEP_U32_ACK: {
                     return accept_u32_ack(ctx);
+                }
+                case STEP_ADDRESS_ACK: {
+                    return accept_address_ack(ctx);
                 }
                 case STEP_INDEX_ACK: {
                     return accept_index_ack(ctx);
