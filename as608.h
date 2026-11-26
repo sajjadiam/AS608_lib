@@ -234,7 +234,7 @@ as608_status_t as608_init(as608_t *ctx, const as608_config_t *config);
  * @post A valid terminal ACK sets DONE and stores its raw confirmation
  * code. A transport/protocol fault during BUSY sets DESYNCHRONIZED and
  * records the host error; a non-BUSY context is left unchanged.
- * @note At rebuild stage 25, simple, system-parameter, 16-bit result,
+ * @note At rebuild stage 26, simple, system-parameter, 16-bit result,
  * index-table and search ACK phases plus information-page and template
  * upload/download streaming are active.
  * @see as608_get_result
@@ -1018,6 +1018,37 @@ as608_status_t as608_enroll_start(as608_t *ctx, uint16_t *page_id);
  */
 as608_status_t as608_identify_start(as608_t *ctx, as608_match_t *match);
 
+/**
+ * @brief Start a high-speed fingerprint database search (opcode 0x1B).
+ *
+ * @details PS_HighSpeedSearch uses the same BufferID, StartPage, PageNum
+ * and match ACK fields as PS_Search. The search algorithm runs inside
+ * the sensor; the driver makes no latency or accuracy guarantee.
+ *
+ * @param[in,out] ctx Initialized caller-owned device context.
+ * @param[in,out] search Caller-owned search request and match output.
+ * @retval AS608_STATUS_OK Job admitted; search is not yet confirmed.
+ * @retval AS608_STATUS_INVALID_ARG Null context or search, invalid
+ * buffer ID, zero page_count, or range exceeding the 16-bit PageID space.
+ * @retval AS608_STATUS_NOT_INITIALIZED Context is not initialized.
+ * @retval AS608_STATUS_BUSY Another job owns the context.
+ * @retval AS608_STATUS_RECOVERY_REQUIRED Link is quarantined.
+ * @pre Serialize calls sharing ctx. Keep search valid and separate from
+ * driver storage, and its input fields unchanged, until completion or
+ * abort. The selected CharBuffer must contain valid features. Select a
+ * range within the actual sensor capacity.
+ * @post Only a checksum-verified ACK_OK of length 5 with a PageID in
+ * the requested range changes search->match. Admission rejection,
+ * negative ACK, protocol fault, timeout or abort leave it unchanged.
+ * @note Firmware support must be verified on the target. ACK_NOT_FOUND
+ * is a terminal sensor result. Check both result fields before using match.
+ * @see as608_search_start
+ * @see as608_process
+ * @see as608_get_result
+ * @see AS60x MCU User's Guide V1.0, printed page 30.
+ */
+as608_status_t as608_high_speed_search_start(as608_t *ctx, as608_search_t *search);
+
 /* -------------------------------------------------------------------------
  * Planned API contracts (declarations only; NOT implemented or linkable).
  *
@@ -1164,12 +1195,6 @@ typedef struct {
     bool found;
     uint16_t page_id;
 } as608_free_slot_t;
-
-/* ---- Fingerprint recognition ---- */
-
-/** PS_HighSpeedSearch (0x1B): same request/output contract as Search. */
-as608_status_t as608_high_speed_search_start(as608_t *ctx,
-                                             as608_search_t *search);
 
 /* ---- Feature and image transfer ---- */
 

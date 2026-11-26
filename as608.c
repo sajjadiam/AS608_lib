@@ -25,6 +25,7 @@ enum as608_command {
     CMD_IDENTIFY = 0x11,
     CMD_VERIFY_PASSWORD = 0x13,
     CMD_READ_INFO = 0x16,
+    CMD_HIGH_SPEED_SEARCH = 0x1B,
     CMD_COUNT = 0x1D,
     CMD_READ_INDEX = 0x1F
 };
@@ -665,16 +666,21 @@ static as608_progress_t accept_match_ack(as608_t *ctx) {
     return finish(ctx, AS608_ACK_OK);
 }
 
-as608_status_t as608_search_start(as608_t *ctx, as608_search_t *search) {
+/* Validate and launch a range search with the selected opcode. */
+static as608_status_t search_start(as608_t *ctx, as608_search_t *search, uint8_t code) {
     if (!search || !valid_buffer(search->buffer) || !valid_range(search->start_page, search->page_count)) {
         return AS608_STATUS_INVALID_ARG;
     }
 
-    command_t command = {{CMD_SEARCH, (uint8_t)search->buffer}, 6U, STEP_SEARCH_ACK};
+    command_t command = {{code, (uint8_t)search->buffer}, 6U, STEP_SEARCH_ACK};
     store_u16(command.bytes + 2U, search->start_page);
     store_u16(command.bytes + 4U, search->page_count);
 
     return reply_start(ctx, &command, search);
+}
+
+as608_status_t as608_search_start(as608_t *ctx, as608_search_t *search) {
+    return search_start(ctx, search, CMD_SEARCH);
 }
 
 /* =========================================================================
@@ -1043,6 +1049,21 @@ as608_status_t as608_identify_start(as608_t *ctx, as608_match_t *match) {
 
 /* =========================================================================
  * END API 25
+ * ========================================================================= */
+
+/* =========================================================================
+ * API 26: as608_high_speed_search_start
+ * =========================================================================
+ * PS_HighSpeedSearch (0x1B), AS60x MCU User's Guide V1.0, p. 30.
+ * Uses the same range and match ACK format as PS_Search.
+ */
+
+as608_status_t as608_high_speed_search_start(as608_t *ctx, as608_search_t *search) {
+    return search_start(ctx, search, CMD_HIGH_SPEED_SEARCH);
+}
+
+/* =========================================================================
+ * END API 26
  * ========================================================================= */
 
 /* =========================================================================

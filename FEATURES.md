@@ -6,9 +6,9 @@ This checklist tracks the host library against the Synochip AS60x Communication 
 
 - Checked: implemented in the non-blocking core, within the stated scope.
 - Unchecked: missing, incomplete, or awaiting the indicated validation.
-- Command coverage: **18/31 (58.1%)**; 13 commands remain. UpChar and DownChar are implemented with limited file-size support.
+- Command coverage: **19/31 (61.3%)**; 12 commands remain. UpChar and DownChar are implemented with limited file-size support.
 - Implementation is not equivalent to hardware validation or universal firmware compatibility.
-- API design: all 31 documented opcodes have contracts in [as608.h](as608.h). The 13 missing commands are declarations only under `AS608_DECLARE_PLANNED_API`; they remain unchecked until implemented and tested.
+- API design: all 31 documented opcodes have contracts in [as608.h](as608.h). The 12 missing commands are declarations only under `AS608_DECLARE_PLANNED_API`; they remain unchecked until implemented and tested.
 
 ## Active rebuild status (current source)
 
@@ -37,11 +37,12 @@ This checklist tracks the host library against the Synochip AS60x Communication 
 - [x] API 23: `as608_empty_database_start()` — PS_Empty (0x0D), complete database deletion and dedicated tests.
 - [x] API 24: `as608_enroll_start()` — PS_Enroll (0x10), sensor-managed enrollment and returned PageID; dedicated host tests, hardware support unverified.
 - [x] API 25: `as608_identify_start()` — PS_Identify (0x11), automatic acquisition and database match; dedicated host tests, hardware support unverified.
+- [x] API 26: `as608_high_speed_search_start()` — PS_HighSpeedSearch (0x1B), shared range search and match ACK handling; dedicated host tests, hardware support unverified.
 - [ ] Remaining planned APIs under `AS608_DECLARE_PLANNED_API`.
 
-Active wire-command coverage: **18/31** (PS_VfyPwd 0x13, PS_ReadSysPara 0x0F, PS_ValidTempleteNum 0x1D, PS_ReadIndexTable 0x1F, PS_ReadINFpage 0x16, PS_GetImage 0x01, PS_GenChar 0x02, PS_Match 0x03, PS_RegModel 0x05, PS_Search 0x04, PS_LoadChar 0x07, PS_UpChar 0x08, PS_DownChar 0x09, PS_StoreChar 0x06, PS_DeletChar 0x0C, PS_Empty 0x0D, PS_Enroll 0x10, PS_Identify 0x11).
-All 23 baseline APIs are restored and APIs 24–25 are implemented. The independent, dedicated and full
-command/async regression suites are enabled in CI. The 13 remaining
+Active wire-command coverage: **19/31** (PS_VfyPwd 0x13, PS_ReadSysPara 0x0F, PS_ValidTempleteNum 0x1D, PS_ReadIndexTable 0x1F, PS_ReadINFpage 0x16, PS_GetImage 0x01, PS_GenChar 0x02, PS_Match 0x03, PS_RegModel 0x05, PS_Search 0x04, PS_LoadChar 0x07, PS_UpChar 0x08, PS_DownChar 0x09, PS_StoreChar 0x06, PS_DeletChar 0x0C, PS_Empty 0x0D, PS_Enroll 0x10, PS_Identify 0x11, PS_HighSpeedSearch 0x1B).
+All 23 baseline APIs are restored and APIs 24–26 are implemented. The independent, dedicated and full
+command/async regression suites are enabled in CI. The 12 remaining
 opcodes are planned, not implemented. Current firmware validation remains
 outstanding; historical hardware results are not new validation.
 
@@ -54,7 +55,7 @@ outstanding; historical hardware results are not new validation.
 - [x] `0x05 PS_RegModel` — Merge fingerprint features into a template; `as608_create_model_start()`.
 - [x] `0x10 PS_Enroll` — Sensor-side automatic single-scan enrollment, free-slot selection and PageID; `as608_enroll_start()`. Firmware support unverified.
 - [x] `0x11 PS_Identify` — Automatic acquisition and identification; may update incomplete templates on a sufficiently strong match; `as608_identify_start()`. Firmware support unverified.
-- [ ] `0x1B PS_HighSpeedSearch` — High-speed database range search. Planned: `as608_high_speed_search_start()`.
+- [x] `0x1B PS_HighSpeedSearch` — High-speed database range search; `as608_high_speed_search_start()`. Firmware support unverified.
 
 ## 2. Template and database management
 
