@@ -170,6 +170,15 @@ typedef struct {
     bool actual_level; /**< Echoed output state, success only. */
 } as608_gpio_request_t;
 
+/** Host-managed two-capture enrollment request.
+ * Poll only while waiting for finger placement/removal; no implicit retry
+ * of uncertain write operations. Whole workflow uses the job deadline.
+ */
+typedef struct {
+    uint16_t page_id;
+    uint32_t poll_interval_ms; /**< Nonzero scheduler poll interval. */
+} as608_enroll_request_t;
+
 /** @brief Successful fingerprint search output. */
 typedef struct {
     uint16_t page_id; /**< Matched database position. */
@@ -282,9 +291,12 @@ typedef struct {
     as608_state_t state;
     as608_result_t result;
     uint8_t step;
+    uint8_t poll_step;
     as608_transaction_t transaction;
     uint16_t page_id;
     uint16_t chunk_size;
+    uint32_t poll_interval_ms;
+    uint32_t poll_started_ms;
     as608_char_buffer_t download_buffer;
     bool store_after_download;
     const uint8_t *input;
@@ -359,10 +371,10 @@ as608_status_t as608_init(as608_t *ctx, const as608_config_t *config);
  * and stores its raw confirmation
  * code. A transport/protocol fault during BUSY sets DESYNCHRONIZED and
  * records the host error; a non-BUSY context is left unchanged.
- * @note At rebuild stage 43, simple, GPIO, system-parameter, 16/32-bit result,
+ * @note At rebuild stage 44, simple, GPIO, system-parameter, 16/32-bit result,
  * 32-byte index/notepad and search ACK phases plus information-page, template,
  * feature and image upload streaming are active. Template, feature and
- * image download streaming and the experimental burn ACK-each profile are supported.
+ * image download streaming, experimental burn ACK-each and host two-scan enrollment are supported.
  * @see as608_get_result
  * @see as608_confirm_reset
  */
@@ -1756,6 +1768,42 @@ as608_status_t as608_write_user_gpio_start(as608_t *ctx, as608_gpio_request_t *r
  */
 as608_status_t as608_burn_code_start(as608_t *ctx, const as608_firmware_request_t *request);
 
+/**
+ * @brief Start a host-managed two-capture enrollment at an explicit PageID.
+ *
+ * @details GetImage, GenChar(1), wait for NO_FINGER, GetImage,
+ * GenChar(2), RegModel, StoreChar(2). The entire workflow shares the
+ * original timeout. GetImage polls are paced only on NO_FINGER while
+ * placing a finger or ACK_OK while waiting for removal. A first poll
+ * after either response arms the interval; no busy waiting or sleep.
+ *
+ * @param[in,out] ctx Initialized caller-owned device context.
+ * @param[in] request Destination PageID and poll interval in milliseconds.
+ * @retval AS608_STATUS_OK Job admitted, enrollment not yet complete.
+ * @retval AS608_STATUS_INVALID_ARG Null context/request or interval zero
+ * or greater than AS608_MAX_TIMEOUT_MS.
+ * @retval AS608_STATUS_NOT_INITIALIZED Context is not initialized.
+ * @retval AS608_STATUS_BUSY Another job owns the context.
+ * @retval AS608_STATUS_RECOVERY_REQUIRED Physical link recovery required.
+ * @pre Serialize calls on ctx. Verify target support for the two-buffer
+ * workflow and destination capacity/occupancy. Provide a timeout large
+ * enough for human interaction. Caller must authorize replacement of
+ * the selected page; no duplicate or free-slot check is performed.
+ * @post Request values are copied during admission; descriptor may be
+ * reused immediately. Only successful StoreChar ACK completes with
+ * ACK_OK. Other valid negative ACKs terminate with the raw confirmation,
+ * except the finger-placement/removal polling conditions above.
+ * Host faults or abort quarantine the link; no automatic flash retry.
+ * @warning A timeout or abort after StoreChar transmission leaves flash
+ * contents uncertain. Recovery and readback are application duties.
+ * Finger removal means an observed NO_FINGER response, not independent
+ * liveness detection. No public intermediate enrollment-stage callback.
+ * @see as608_process
+ * @see as608_get_result
+ * @see AS60x MCU User's Guide V1.0, printed pages 33–34.
+ */
+as608_status_t as608_enroll_two_scan_start(as608_t *ctx, const as608_enroll_request_t *request);
+
 /* -------------------------------------------------------------------------
  * Planned API contracts (declarations only; NOT implemented or linkable).
  *
@@ -1777,15 +1825,6 @@ typedef enum {
     AS608_SENSOR_IMAGE_VALID = 0x08
 } as608_sensor_status_flag_t;
 
-/** Host-managed two-capture enrollment request.
- * Poll only while waiting for finger placement/removal; no implicit retry
- * of uncertain write operations. Whole workflow uses the job deadline.
- */
-typedef struct {
-    uint16_t page_id;
-    uint32_t poll_interval_ms; /**< Nonzero scheduler poll interval. */
-} as608_enroll_request_t;
-
 /** Free-slot lookup result, committed on successful completion.
  * found == false is a valid outcome (no free slot); page_id then invalid.
  */
@@ -1795,10 +1834,6 @@ typedef struct {
 } as608_free_slot_t;
 
 /* ---- Host-managed composite operations (no extra wire opcodes) ---- */
-
-/** Capture twice with finger removal, GenChar, RegModel and StoreChar. */
-as608_status_t as608_enroll_two_scan_start(as608_t *ctx,
-                                          const as608_enroll_request_t *request);
 
 /** Capture, generate and search using the requested buffer/range. */
 as608_status_t as608_identify_range_start(as608_t *ctx, as608_search_t *search);

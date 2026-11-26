@@ -76,7 +76,16 @@ enum as608_step {
     STEP_GPIO_ACK,
     STEP_BURN_READY_ACK,
     STEP_BURN_SOURCE,
-    STEP_BURN_DATA_ACK
+    STEP_BURN_DATA_ACK,
+    STEP_ENROLL_CAPTURE1_ACK,
+    STEP_ENROLL_GEN1_ACK,
+    STEP_ENROLL_REMOVE_ACK,
+    STEP_ENROLL_CAPTURE2_ACK,
+    STEP_ENROLL_GEN2_ACK,
+    STEP_ENROLL_MERGE_ACK,
+    STEP_ENROLL_STORE_ACK,
+    STEP_ENROLL_WAIT_ARM,
+    STEP_ENROLL_WAIT
 };
 
 /* =========================================================================
@@ -1746,6 +1755,130 @@ as608_status_t as608_burn_code_start(as608_t *ctx, const as608_firmware_request_
  * ========================================================================= */
 
 /* =========================================================================
+ * API 44: as608_enroll_two_scan_start
+ * =========================================================================
+ * Host-managed GetImage, GenChar(1), removal, GetImage, GenChar(2),
+ * RegModel, StoreChar(2). AS60x MCU User's Guide V1.0, pp. 33–34.
+ */
+
+/* Schedule a paced GetImage poll without reading the clock twice per call. */
+static as608_progress_t enroll_wait(as608_t *ctx) {
+    ctx->poll_step = ctx->step;
+    ctx->step = STEP_ENROLL_WAIT_ARM;
+    return AS608_PENDING;
+}
+
+/* Arm/check the poll interval under the original wrap-safe job deadline. */
+static as608_progress_t poll_enroll_wait(as608_t *ctx) {
+    const as608_transaction_t *txn = &ctx->transaction;
+    const uint32_t now = txn->config.port.clock_ms(txn->config.port.user);
+
+    if ((uint32_t)(now - txn->started_ms) >= txn->config.timeout_ms) {
+        return quarantine(ctx, AS608_STATUS_TIMEOUT);
+    }
+
+    if (ctx->step == STEP_ENROLL_WAIT_ARM) {
+        ctx->poll_started_ms = now;
+        ctx->step = STEP_ENROLL_WAIT;
+        return AS608_PENDING;
+    }
+
+    if ((uint32_t)(now - ctx->poll_started_ms) < ctx->poll_interval_ms) {
+        return AS608_PENDING;
+    }
+
+    if ((ctx->poll_step != STEP_ENROLL_CAPTURE1_ACK) &&
+        (ctx->poll_step != STEP_ENROLL_REMOVE_ACK) &&
+        (ctx->poll_step != STEP_ENROLL_CAPTURE2_ACK)) {
+        return quarantine(ctx, AS608_STATUS_UNEXPECTED_REPLY);
+    }
+
+    const uint8_t bytes[] = {CMD_GET_IMAGE};
+    return next_or_fault(ctx, command_start(ctx, bytes, sizeof(bytes), ctx->poll_step));
+}
+
+/* Advance the enrollment sequence only on the phase-appropriate ACK. */
+static as608_progress_t accept_enroll_ack(as608_t *ctx) {
+    const as608_transaction_frame_t frame = as608_transaction_received(&ctx->transaction);
+
+    if ((frame.kind != AS608_PACKET_ACK) || (frame.length != 1U)) {
+        return quarantine(ctx, AS608_STATUS_UNEXPECTED_REPLY);
+    }
+
+    const uint8_t ack = frame.data[0];
+
+    if (ctx->step == STEP_ENROLL_REMOVE_ACK) {
+        if (ack == AS608_ACK_OK) {
+            return enroll_wait(ctx);
+        }
+        if (ack == AS608_ACK_NO_FINGER) {
+            const uint8_t bytes[] = {CMD_GET_IMAGE};
+            return next_or_fault(ctx, command_start(ctx, bytes, sizeof(bytes), STEP_ENROLL_CAPTURE2_ACK));
+        }
+        return finish(ctx, ack);
+    }
+
+    if (((ctx->step == STEP_ENROLL_CAPTURE1_ACK) || (ctx->step == STEP_ENROLL_CAPTURE2_ACK)) &&
+        (ack == AS608_ACK_NO_FINGER)) {
+        return enroll_wait(ctx);
+    }
+
+    if (ack != AS608_ACK_OK) {
+        return finish(ctx, ack);
+    }
+
+    switch (ctx->step) {
+        case STEP_ENROLL_CAPTURE1_ACK:
+        case STEP_ENROLL_CAPTURE2_ACK: {
+            const bool first = (ctx->step == STEP_ENROLL_CAPTURE1_ACK);
+            const uint8_t bytes[] = {CMD_GEN_CHAR, first ? AS608_CHAR_BUFFER_1 : AS608_CHAR_BUFFER_2};
+            return next_or_fault(ctx, command_start(ctx, bytes, sizeof(bytes),
+                                                  first ? STEP_ENROLL_GEN1_ACK : STEP_ENROLL_GEN2_ACK));
+        }
+        case STEP_ENROLL_GEN1_ACK: {
+            const uint8_t bytes[] = {CMD_GET_IMAGE};
+            return next_or_fault(ctx, command_start(ctx, bytes, sizeof(bytes), STEP_ENROLL_REMOVE_ACK));
+        }
+        case STEP_ENROLL_GEN2_ACK: {
+            const uint8_t bytes[] = {CMD_REG_MODEL};
+            return next_or_fault(ctx, command_start(ctx, bytes, sizeof(bytes), STEP_ENROLL_MERGE_ACK));
+        }
+        case STEP_ENROLL_MERGE_ACK: {
+            const command_t command = page_command(CMD_STORE_CHAR, AS608_CHAR_BUFFER_2, ctx->page_id);
+            return next_or_fault(ctx, command_start(ctx, command.bytes, command.length, STEP_ENROLL_STORE_ACK));
+        }
+        case STEP_ENROLL_STORE_ACK: {
+            return finish(ctx, ack);
+        }
+        default: {
+            return quarantine(ctx, AS608_STATUS_UNEXPECTED_REPLY);
+        }
+    }
+}
+
+as608_status_t as608_enroll_two_scan_start(as608_t *ctx, const as608_enroll_request_t *request) {
+    if (!request || (request->poll_interval_ms == 0U) ||
+        (request->poll_interval_ms > AS608_MAX_TIMEOUT_MS)) {
+        return AS608_STATUS_INVALID_ARG;
+    }
+
+    const as608_enroll_request_t saved = *request;
+    const command_t command = {{CMD_GET_IMAGE}, 1U, STEP_ENROLL_CAPTURE1_ACK};
+    const as608_status_t status = launch(ctx, &command);
+
+    if (status == AS608_STATUS_OK) {
+        ctx->page_id = saved.page_id;
+        ctx->poll_interval_ms = saved.poll_interval_ms;
+    }
+
+    return status;
+}
+
+/* =========================================================================
+ * END API 44
+ * ========================================================================= */
+
+/* =========================================================================
  * API 02: as608_process
  * =========================================================================
  * Keep the process dispatcher after the active command API sections so
@@ -1780,6 +1913,10 @@ as608_progress_t as608_process(as608_t *ctx) {
         return poll_download_source(ctx);
     }
 
+    if ((ctx->step == STEP_ENROLL_WAIT_ARM) || (ctx->step == STEP_ENROLL_WAIT)) {
+        return poll_enroll_wait(ctx);
+    }
+
     size_t limit;
 
     switch (ctx->step) {
@@ -1793,6 +1930,13 @@ as608_progress_t as608_process(as608_t *ctx) {
         case STEP_ADDRESS_ACK:
         case STEP_BURN_READY_ACK:
         case STEP_BURN_DATA_ACK:
+        case STEP_ENROLL_CAPTURE1_ACK:
+        case STEP_ENROLL_GEN1_ACK:
+        case STEP_ENROLL_REMOVE_ACK:
+        case STEP_ENROLL_CAPTURE2_ACK:
+        case STEP_ENROLL_GEN2_ACK:
+        case STEP_ENROLL_MERGE_ACK:
+        case STEP_ENROLL_STORE_ACK:
         case STEP_INFO_ACK: {
             limit = 1U;
             break;
@@ -1878,6 +2022,15 @@ as608_progress_t as608_process(as608_t *ctx) {
                 case STEP_BURN_READY_ACK:
                 case STEP_BURN_DATA_ACK: {
                     return accept_burn_ack(ctx);
+                }
+                case STEP_ENROLL_CAPTURE1_ACK:
+                case STEP_ENROLL_GEN1_ACK:
+                case STEP_ENROLL_REMOVE_ACK:
+                case STEP_ENROLL_CAPTURE2_ACK:
+                case STEP_ENROLL_GEN2_ACK:
+                case STEP_ENROLL_MERGE_ACK:
+                case STEP_ENROLL_STORE_ACK: {
+                    return accept_enroll_ack(ctx);
                 }
                 case STEP_GPIO_ACK: {
                     return accept_gpio_ack(ctx);
