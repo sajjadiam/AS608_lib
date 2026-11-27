@@ -5,68 +5,10 @@
 #include <stdio.h>
 #include <string.h>
 
-typedef struct {
-    uint8_t tx[16U];
-    uint8_t rx[17U];
-    size_t tx_length;
-    size_t rx_length;
-    size_t rx_pos;
-    unsigned int io_calls;
-    unsigned int clock_calls;
-    uint32_t now;
-} mock_t;
-
-/* Accept one TX byte into the mock wire buffer. */
-static int32_t write_byte(void *user, const uint8_t *data, size_t length) {
-    mock_t *mock = user;
-    assert(data && (length > 0U) && (mock->tx_length < sizeof(mock->tx)));
-    ++mock->io_calls;
-    mock->tx[mock->tx_length++] = *data;
-    return 1;
-}
-
-/* Return one available RX byte or report no data. */
-static int32_t read_byte(void *user, uint8_t *data, size_t length) {
-    mock_t *mock = user;
-    assert(data && (length > 0U));
-    ++mock->io_calls;
-
-    if (mock->rx_pos == mock->rx_length) {
-        return 0;
-    }
-
-    *data = mock->rx[mock->rx_pos++];
-    return 1;
-}
-
-/* Report the mock transmitter idle. */
-static int32_t tx_idle(void *user) {
-    mock_t *mock = user;
-    ++mock->io_calls;
-    return 1;
-}
-
-/* Return the mock clock and count accesses. */
-static uint32_t clock_ms(void *user) {
-    mock_t *mock = user;
-    ++mock->clock_calls;
-    return mock->now;
-}
-
-/* Initialize a fresh device context. */
-static void setup(as608_t *ctx, mock_t *mock) {
-    const as608_config_t config = {
-        .port = {
-            .user = mock, .try_write = write_byte, .try_read = read_byte,
-            .tx_idle = tx_idle, .clock_ms = clock_ms
-        },
-        .device_address = AS608_DEFAULT_ADDRESS,
-        .timeout_ms = 100U
-    };
-
-    *ctx = (as608_t){0};
-    assert(as608_init(ctx, &config) == AS608_STATUS_OK);
-}
+#define AS608_TEST_TX_CAPACITY 16U
+#define AS608_TEST_RX_CAPACITY 17U
+#define AS608_TEST_DRAIN 0
+#include "tests/common/mock_uart.h"
 
 /* Build independent ACK bytes, including malformed lengths. */
 static void prepare_reply(mock_t *mock, uint8_t kind, uint8_t ack, uint8_t level, size_t length) {

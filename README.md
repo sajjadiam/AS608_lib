@@ -8,7 +8,7 @@ transfer. The unified non-blocking port still needs hardware validation.
 
 ## Completed API rebuild — 46 APIs
 
-Post-rebuild maintenance: stage 55, command-layer review and hardening.
+Post-rebuild maintenance: stage 56, shared host-test fixtures.
 
 The five lifecycle APIs and forty-one command/job APIs covering thirty-one opcodes (BurnCode experimental) (0x13, 0x0F, 0x1D, 0x1F, 0x16, 0x01, 0x02, 0x03, 0x05, 0x04, 0x07, 0x08, 0x09, 0x06, 0x0C, 0x0D, 0x10, 0x11, 0x1B, 0x0A, 0x0B, 0x1C, 0x0E, 0x17, 0x12, 0x14, 0x15, 0x18, 0x19, 0x1E, 0x1A)
 are currently compiled from as608.c. Process supports simple,
@@ -80,6 +80,12 @@ The dispatcher reuses its ACK limit to reject impossible SENT events.
 The original public signatures, context layout, wire profiles and job
 ordering are unchanged. Wide callback values and corrupt chunk metadata
 are exercised by host regression tests.
+All 41 dedicated command/job test translation units now use shared
+one-byte UART fixtures in tests/common/mock_uart.h, with original local
+buffer capacities and drain profiles. Identical independent frame helpers
+are in mock_wire.h; specialized lifecycle, packet, transaction and partial-I/O
+regressions retain their fixtures. Test cases and production sources are unchanged.
+The root test paths remain until the build-system migration.
 
 All 23 baseline APIs and APIs 24–46 are now implemented (BurnCode experimental). CI builds independent packet and
 transaction tests, API 01–46 dedicated tests, and full command/async/fault

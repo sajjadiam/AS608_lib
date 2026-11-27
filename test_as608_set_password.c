@@ -5,83 +5,10 @@
 #include <stdio.h>
 #include <string.h>
 
-typedef struct {
-    uint8_t tx[16U];
-    uint8_t rx[12U];
-    size_t tx_length;
-    size_t rx_length;
-    size_t rx_pos;
-    unsigned int io_calls;
-    unsigned int clock_calls;
-    uint32_t now;
-} mock_t;
-
-/* Accept one TX byte into the mock wire buffer. */
-static int32_t write_byte(void *user, const uint8_t *data, size_t length) {
-    mock_t *mock = user;
-    assert(data && (length > 0U) && (mock->tx_length < sizeof(mock->tx)));
-    ++mock->io_calls;
-    mock->tx[mock->tx_length++] = *data;
-    return 1;
-}
-
-/* Return one available RX byte without blocking. */
-static int32_t read_byte(void *user, uint8_t *data, size_t length) {
-    mock_t *mock = user;
-    assert(data && (length > 0U));
-    ++mock->io_calls;
-
-    if (mock->rx_pos == mock->rx_length) {
-        return 0;
-    }
-
-    *data = mock->rx[mock->rx_pos++];
-    return 1;
-}
-
-/* Report mock transmitter idle. */
-static int32_t tx_idle(void *user) {
-    mock_t *mock = user;
-    ++mock->io_calls;
-    return 1;
-}
-
-/* Return the mock clock and count reads. */
-static uint32_t clock_ms(void *user) {
-    mock_t *mock = user;
-    ++mock->clock_calls;
-    return mock->now;
-}
-
-/* Initialize a fresh context with the mock port. */
-static void setup(as608_t *ctx, mock_t *mock) {
-    const as608_config_t config = {
-        .port = {
-            .user = mock, .try_write = write_byte, .try_read = read_byte,
-            .tx_idle = tx_idle, .clock_ms = clock_ms
-        },
-        .device_address = AS608_DEFAULT_ADDRESS,
-        .timeout_ms = 100U
-    };
-
-    *ctx = (as608_t){0};
-    assert(as608_init(ctx, &config) == AS608_STATUS_OK);
-}
-
-/* Build an independent ACK frame and checksum. */
-static void prepare_ack(mock_t *mock, uint8_t ack) {
-    const uint8_t header[] = {
-        0xEFU, 0x01U, 0xFFU, 0xFFU, 0xFFU, 0xFFU, 0x07U, 0x00U, 0x03U
-    };
-    const uint16_t sum = (uint16_t)(0x07U + 0x03U + ack);
-
-    (void)memcpy(mock->rx, header, sizeof(header));
-    mock->rx[9] = ack;
-    mock->rx[10] = (uint8_t)(sum >> 8U);
-    mock->rx[11] = (uint8_t)sum;
-    mock->rx_pos = 0U;
-    mock->rx_length = sizeof(mock->rx);
-}
+#define AS608_TEST_TX_CAPACITY 16U
+#define AS608_TEST_RX_CAPACITY 12U
+#define AS608_TEST_DRAIN 0
+#include "tests/common/mock_wire.h"
 
 /* Poll within the cooperative I/O budget. */
 static as608_progress_t run(as608_t *ctx, mock_t *mock) {
@@ -127,7 +54,7 @@ static void test_wire(void) {
             mock.tx_length = 0U;
             mock.io_calls = 0U;
             mock.clock_calls = 0U;
-            prepare_ack(&mock, confirmations[i]);
+            test_prepare_ack(&mock, confirmations[i]);
             assert(as608_set_password_start(&ctx, passwords[p]) == AS608_STATUS_OK);
             assert(mock.io_calls == 0U && mock.clock_calls == 1U);
             assert(!as608_get_result(&ctx, &result));
@@ -145,7 +72,7 @@ static void test_wire(void) {
 
     /* Verification is a separate job, not an automatic second command. */
     mock.tx_length = 0U;
-    prepare_ack(&mock, AS608_ACK_OK);
+    test_prepare_ack(&mock, AS608_ACK_OK);
     assert(as608_verify_password_start(&ctx, UINT32_C(0x80000001)) == AS608_STATUS_OK);
     assert(run(&ctx, &mock) == AS608_COMPLETE);
     assert(mock.tx_length == 16U && mock.tx[9] == 0x13U && mock.tx[15] == 0x9CU);
@@ -160,7 +87,7 @@ static void test_fault(unsigned int fault) {
     as608_status_t expected = AS608_STATUS_UNEXPECTED_REPLY;
     setup(&ctx, &mock);
     if (fault < 3U) {
-        prepare_ack(&mock, AS608_ACK_OK);
+        test_prepare_ack(&mock, AS608_ACK_OK);
         if (fault == 0U) {
             mock.rx[11] ^= 1U;
             expected = AS608_STATUS_CHECKSUM_ERROR;
