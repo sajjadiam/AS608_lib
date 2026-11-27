@@ -26,7 +26,15 @@ jobs:
           ${{ matrix.compiler }} -x c++ -std=c++11 -Wall -Wextra -Werror -pedantic -I. -fsyntax-only test_as608_port_header.c
           ${{ matrix.compiler }} -std=c11 -Wall -Wextra -Werror -pedantic -ffreestanding -I. -fsyntax-only test_as608_transaction_header.c
           ${{ matrix.compiler }} -x c++ -std=c++11 -Wall -Wextra -Werror -pedantic -I. -fsyntax-only test_as608_transaction_header.c
-          printf '#include "as608.h"\n' | ${{ matrix.compiler }} -std=c11 -Wall -Wextra -Werror -pedantic -I. -DAS608_DECLARE_PLANNED_API -x c -fsyntax-only -
+          ${{ matrix.compiler }} -std=c11 -Wall -Wextra -Werror -pedantic -ffreestanding -I. -fsyntax-only test_as608_header.c
+          for source in as608_packet as608_transaction as608; do
+            ${{ matrix.compiler }} -std=c11 -Wall -Wextra -Werror -pedantic -I. -c "$source.c" -o "build/$source.o"
+          done
+          ${{ matrix.compiler }} -std=c11 -Wall -Wextra -Werror -pedantic -I. test_as608_header.c build/as608_packet.o build/as608_transaction.o build/as608.o -o build/test_public_c
+          ./build/test_public_c
+          ${{ matrix.compiler }} -x c++ -std=c++11 -Wall -Wextra -Werror -pedantic -I. -c test_as608_header.c -o build/test_public_cpp.o
+          ${{ matrix.compiler }} build/test_public_cpp.o build/as608_packet.o build/as608_transaction.o build/as608.o -o build/test_public_cpp
+          ./build/test_public_cpp
           ${{ matrix.compiler }} -std=c11 -Wall -Wextra -Werror -pedantic -I. as608_packet.c as608_transaction.c test_as608_transaction.c -o build/test_transaction
           ./build/test_transaction
           ${{ matrix.compiler }} -std=c11 -Wall -Wextra -Werror -pedantic -I. as608_packet.c test_as608_packet.c -o build/test_packet

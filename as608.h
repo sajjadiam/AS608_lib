@@ -2,11 +2,17 @@
  * @file as608.h
  * @brief Public API for AS608/AS60x UART fingerprint modules.
  * @details
- * ISO C11, cooperative non-blocking, caller-owned memory, no heap allocation, no HAL/RTOS
- * dependency. The reference chip is AS608_QCCF; the firmware's AS60x command
- * support and template interoperability must be validated per module.
+ * ISO C11 core, C++11-compatible declarations, cooperative non-blocking
+ * operation, caller-owned storage, no heap and no HAL/RTOS dependency.
+ * All 46 APIs are declared unconditionally. The reference chip is
+ * AS608_QCCF; command availability and template compatibility must be
+ * verified on the actual firmware. BurnCode remains experimental.
  *
  * @warning Calls sharing one @ref as608_t are not thread-safe or ISR-safe.
+ * Serialize access, including result access, and give each physical byte
+ * stream a single owner. No callback may re-enter the driver. Public
+ * host structures are not wire layouts or stable binary serialization
+ * formats; rebuild callers and core with compatible compiler ABI options.
  */
 #ifndef AS608_H
 #define AS608_H
@@ -20,6 +26,8 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+/* ---- Protocol and storage sizes ---- */
 
 /** @brief Documented AS60x ordinary feature file size (MCU User's Guide V1.0, section 2.6). */
 #define AS608_FEATURE_256_BYTES ((size_t)256U)
@@ -40,6 +48,9 @@ extern "C" {
 /** @brief Documented user-flash notepad page size and count (verify on target). */
 #define AS608_NOTEPAD_PAGE_BYTES ((size_t)32U)
 #define AS608_NOTEPAD_PAGE_COUNT 16U
+
+/* ---- Sensor confirmations and host result ---- */
+
 /**
  * @brief AS60x device confirmation codes (wire values, not ordinal values).
  * @details From the AS60x communication manual, confirmation-code table.
@@ -90,14 +101,20 @@ typedef enum {
 
 /**
  * @brief Result of a sensor transaction.
- * @details If status is AS608_STATUS_OK, confirmation contains the raw, valid
- * one-byte sensor code (including unknown values). Otherwise confirmation is
- * invalid and shall be ignored. A command succeeds only if both fields are OK.
+ * @details If status is AS608_STATUS_OK, confirmation contains the raw,
+ * validated sensor code (including unknown values). Otherwise confirmation
+ * is invalid and must be ignored. Check both fields before using output.
+ * For standalone DownChar/DownImage jobs, an OK result preserves the
+ * readiness ACK after physical TX drain; no final acceptance ACK is read.
+ * A positive result does not establish persistence or sensor-side effects
+ * beyond the guarantee documented by the individual API.
  */
 typedef struct {
     as608_status_t status; /**< Host transaction status. */
     uint8_t confirmation;  /**< Valid only when status == AS608_STATUS_OK. */
 } as608_result_t;
+
+/* ---- Command selectors and decoded parameters ---- */
 
 /** @brief IDs of the sensor's two character buffers. */
 typedef enum {
@@ -148,6 +165,8 @@ typedef enum {
     AS608_SENSOR_IMAGE_VALID = 0x08
 } as608_sensor_status_flag_t;
 
+/* ---- Fixed-size device records ---- */
+
 /** Fixed-width descriptor bytes, NOT guaranteed NUL-terminated.
  * Raw wire bytes from the documented AS60x layout; verify on target.
  * product_model is not a guaranteed unique device serial number.
@@ -178,28 +197,28 @@ typedef struct {
     bool actual_level; /**< Echoed output state, success only. */
 } as608_gpio_request_t;
 
-/** Host-managed two-capture enrollment request.
- * Poll only while waiting for finger placement/removal; no implicit retry
- * of uncertain write operations. Whole workflow uses the job deadline.
- */
-typedef struct {
-    uint16_t page_id;
-    uint32_t poll_interval_ms; /**< Nonzero scheduler poll interval. */
-} as608_enroll_request_t;
-
-/** Free-slot lookup result, committed on successful completion.
- * found == false is a valid outcome (no free slot); page_id then invalid.
- */
-typedef struct {
-    bool found;
-    uint16_t page_id;
-} as608_free_slot_t;
+/* ---- Search and match records ---- */
 
 /** @brief Successful fingerprint search output. */
 typedef struct {
     uint16_t page_id; /**< Matched database position. */
     uint16_t score;   /**< Firmware-defined score; not a probability. */
 } as608_match_t;
+
+/**
+ * @brief Search input and output in a single caller-owned object.
+ * @details Set buffer, start_page and page_count before calling the function.
+ * match is modified only if both result fields indicate AS608_STATUS_OK and
+ * AS608_ACK_OK; otherwise match is left unchanged.
+ */
+typedef struct {
+    as608_char_buffer_t buffer; /**< [in] CharBuffer1 or CharBuffer2. */
+    uint16_t start_page;        /**< [in] First page, inclusive. */
+    uint16_t page_count;        /**< [in] Number of pages to scan; must be nonzero. */
+    as608_match_t match;        /**< [out] Valid only following successful match. */
+} as608_search_t;
+
+/* ---- Template, feature and streaming records ---- */
 
 /**
  * @brief Caller-owned destination for an uploaded fingerprint template.
@@ -224,7 +243,8 @@ typedef struct {
 /** Non-blocking stream sink: consume/copy the entire validated fragment
  * immediately and return true, or return false to fail the job. No RX
  * backpressure is assumed: an unready sink is a failure, not a retry.
- * The supplied pointer is borrowed for this call only.
+ * The supplied pointer is borrowed for this call only. Do not retain it
+ * or use it asynchronously. No callback may block or re-enter the driver.
  */
 typedef bool (*as608_stream_write_fn)(void *user, const uint8_t *data,
                                      size_t length);
@@ -240,15 +260,20 @@ typedef struct {
  * or a negative value on failure. No partial positive return is permitted.
  * Do not advance source state on a zero return. Each request is bounded by
  * the transport payload limit; no callback may wait or re-enter the driver.
+ * The writable destination is borrowed only for this call; never retain it
+ * or write to it asynchronously. A positive return must equal length.
  */
 typedef int32_t (*as608_stream_read_fn)(void *user, uint8_t *data,
                                        size_t length);
 
+/** @brief Caller-owned descriptor for an exact-length transmit stream. */
 typedef struct {
     void *user;
     as608_stream_read_fn read;
     size_t length; /**< Exact nonzero number of wire bytes to send. */
 } as608_stream_source_t;
+
+/* ---- Experimental firmware maintenance ---- */
 
 /** PS_BurnCode (0x1A) upgrade mode; variant-specific, destructive. */
 typedef enum {
@@ -271,37 +296,56 @@ typedef struct {
     bool authorized; /**< Explicit authorization after target validation. */
 } as608_firmware_request_t;
 
-/**
- * @brief Search input and output in a single caller-owned object.
- * @details Set buffer, start_page and page_count before calling the function.
- * match is modified only if both result fields indicate AS608_STATUS_OK and
- * AS608_ACK_OK; otherwise match is left unchanged.
+/* ---- Host composite job records ---- */
+
+/** Host-managed two-capture enrollment request.
+ * Poll only while waiting for finger placement/removal; no implicit retry
+ * of uncertain write operations. Whole workflow uses the job deadline.
  */
 typedef struct {
-    as608_char_buffer_t buffer; /**< [in] CharBuffer1 or CharBuffer2. */
-    uint16_t start_page;        /**< [in] First page, inclusive. */
-    uint16_t page_count;        /**< [in] Number of pages to scan; must be nonzero. */
-    as608_match_t match;        /**< [out] Valid only following successful match. */
-} as608_search_t;
+    uint16_t page_id;
+    uint32_t poll_interval_ms; /**< Nonzero scheduler poll interval. */
+} as608_enroll_request_t;
 
+/** Free-slot lookup result, committed on successful completion.
+ * found == false is a valid outcome (no free slot); page_id then invalid.
+ */
+typedef struct {
+    bool found;
+    uint16_t page_id;
+} as608_free_slot_t;
+
+/* ---- Lifecycle and private context storage ---- */
+
+/** @brief Host job lifecycle; values are not wire codes. */
 typedef enum {
-    AS608_STATE_UNINITIALIZED = 0,
-    AS608_STATE_IDLE,
-    AS608_STATE_BUSY,
-    AS608_STATE_DONE,
-    AS608_STATE_DESYNCHRONIZED,
-    AS608_STATE_DONE_RECOVERY_REQUIRED /**< Terminal ACK available; physical recovery required. */
+    AS608_STATE_UNINITIALIZED        = 0, /**< Fresh context, not admitted. */
+    AS608_STATE_IDLE                 = 1, /**< Initialized; no terminal result. */
+    AS608_STATE_BUSY                 = 2, /**< One admitted job owns the context. */
+    AS608_STATE_DONE                 = 3, /**< Terminal result available; new job permitted. */
+    AS608_STATE_DESYNCHRONIZED        = 4, /**< Host fault; physical recovery required. */
+    AS608_STATE_DONE_RECOVERY_REQUIRED = 5 /**< Terminal burn ACK; recovery required. */
 } as608_state_t;
 
+/** @brief Scheduler progress, not a sensor confirmation or admission status. */
 typedef enum {
-    AS608_PENDING = 0,
-    AS608_COMPLETE, /**< A validated sensor response or completed data transfer. */
-    AS608_FAILED    /**< Host-side error; inspect the result. */
+    AS608_PENDING  = 0, /**< Job remains active. */
+    AS608_COMPLETE = 1, /**< Terminal result available; may be a negative ACK. */
+    AS608_FAILED   = 2  /**< No active job or host fault; query result availability. */
 } as608_progress_t;
 
 /** @brief Caller-owned context; fields are private to the driver.
- * Zero-initialize before init. Do not copy or modify during operation.
- * All calls on a context are serialized by the application.
+ * @details Zero-initialize a fresh object before init. Do not copy or
+ * modify initialized context fields, including while idle or done.
+ * All calls on a context are serialized by the application. Internal
+ * layout is exposed solely for static allocation, not for direct access.
+ * Keep alive until all calls finish; caller-owned job storage may be
+ * released after terminal completion or successful logical abort.
+ * Retained internal pointers are not a guarantee of ownership or validity.
+ * @warning TX/RX buffers may contain plaintext credentials and biometric
+ * data after completion; do not log or expose raw context storage.
+ * No automatic secure erasure is guaranteed. No fixed sizeof or binary
+ * compatibility is promised across compiler ABIs or driver revisions.
  */
 typedef struct {
     as608_state_t state;
@@ -355,7 +399,7 @@ typedef struct {
  *
  * @pre For a new device, zero-initialize the entire context (e.g.,
  * @code
- * static as608_t sensor = {0};
+ * static as608_t sensor; /* Zero-initialized in C and C++. */
  * @endcode
  * ) and ensure a fresh physical link epoch. Calls must be serialized.
  * @post On success, ctx->state is AS608_STATE_IDLE and no job is active.
@@ -368,31 +412,33 @@ as608_status_t as608_init(as608_t *ctx, const as608_config_t *config);
 /**
  * @brief Advance one step of an admitted non-blocking job.
  *
- * @details If BUSY, advance the existing transaction engine at most once
- * and handle its event. No UART wait loop, sleep, automatic retry or
- * allocation occurs. The transaction engine uses the original job
- * deadline, not a new deadline per call or packet.
+ * @details If BUSY, advance one transport, stream-source or paced-wait
+ * phase. Read the clock once and invoke at most one UART I/O callback;
+ * a validated received fragment may also invoke the stream sink.
+ * No UART wait loop, sleep, automatic retry or allocation occurs.
+ * All phases share the original job deadline.
  *
  * @param[in,out] ctx Initialized, caller-owned device context. A NULL
  * pointer is rejected without dereferencing it.
  *
  * @retval AS608_PENDING The job remains BUSY; call again from the scheduler.
- * @retval AS608_COMPLETE A validated terminal result exists (including a
- * negative sensor ACK). Repeated calls in DONE or DONE_RECOVERY_REQUIRED return COMPLETE without I/O.
- * @retval AS608_FAILED Invalid/idle/uninitialized/quarantined context,
- * or a host-side communication/protocol failure.
+ * @retval AS608_COMPLETE A terminal result exists, including a negative
+ * sensor ACK or completion under a documented drain-only profile.
+ * Repeated calls in DONE or DONE_RECOVERY_REQUIRED return COMPLETE
+ * without callbacks.
+ * @retval AS608_FAILED No active job (NULL/idle/uninitialized context),
+ * DESYNCHRONIZED state or host-side communication/protocol failure.
+ * A result need not exist; use as608_get_result() to check availability.
  *
  * @pre Calls sharing the context must be serialized. For useful progress,
  * a start API must have admitted a job, and its buffers must remain valid.
- * @post A valid terminal ACK sets DONE (or DONE_RECOVERY_REQUIRED for burn)
- * and stores its raw confirmation
- * code. A transport/protocol fault during BUSY sets DESYNCHRONIZED and
- * records the host error; a non-BUSY context is left unchanged.
- * @note At rebuild stage 46, simple, GPIO, system-parameter, 16/32-bit result,
- * 32-byte index/notepad and search ACK phases plus information-page, template,
- * feature and image upload streaming are active. Template, feature and
- * image download streaming, experimental burn ACK-each, host two-scan
- * enrollment, range identification and free-slot discovery are supported.
+ * @post Terminal success or a valid terminal negative ACK sets DONE
+ * (DONE_RECOVERY_REQUIRED for burn) and stores its result. A transport
+ * or protocol fault during BUSY sets DESYNCHRONIZED and records a host
+ * error; non-BUSY contexts remain unchanged. A successful standalone
+ * download stores the earlier readiness ACK after physical TX drain.
+ * @note COMPLETE is not equivalent to ACK_OK. Check both result fields
+ * and the individual API's completion guarantee. No automatic recovery.
  * @see as608_get_result
  * @see as608_confirm_reset
  */
@@ -407,7 +453,8 @@ as608_progress_t as608_process(as608_t *ctx);
  * operation changes the context.
  *
  * @param[in] ctx Device context.
- * @param[out] result Writable destination for the result snapshot.
+ * @param[out] result Writable destination for the result snapshot,
+ * separate from driver storage.
  * @retval true A terminal result was copied (including negative sensor
  * ACKs and host-side errors).
  * @retval false Null argument or a context outside the terminal states.
@@ -431,7 +478,7 @@ bool as608_get_result(const as608_t *ctx, as608_result_t *result);
  *
  * @param[in,out] ctx Caller-owned device context.
  * @retval AS608_STATUS_OK The BUSY job was logically aborted.
- * @retval AS608_STATUS_RECOVERY_REQUIRED The context is already quarantined.
+ * @retval AS608_STATUS_RECOVERY_REQUIRED The context already requires recovery.
  * @retval AS608_STATUS_INVALID_ARG NULL context or a state other than
  * BUSY, DESYNCHRONIZED or DONE_RECOVERY_REQUIRED.
  * @pre Calls sharing the context must be serialized.
@@ -464,8 +511,9 @@ as608_status_t as608_abort(as608_t *ctx);
  * except DESYNCHRONIZED or DONE_RECOVERY_REQUIRED.
  *
  * @pre Calls sharing the context must be serialized. Before calling on a
- * DESYNCHRONIZED or DONE_RECOVERY_REQUIRED context, the application must stop/cancel old TX,
- * physically reset or power-cycle the sensor, wait for boot, and purge
+ * DESYNCHRONIZED or DONE_RECOVERY_REQUIRED context, the application must
+ * stop/cancel old TX, perform target-appropriate physical recovery
+ * (including reset/power-cycle where required), wait for readiness and purge
  * all stale RX/TX bytes and UART errors. The port and sensor must have a
  * fresh communication epoch and compatible retained configuration.
  * @post On success, no previous result is available and a new job may
@@ -480,16 +528,20 @@ as608_status_t as608_abort(as608_t *ctx);
 as608_status_t as608_confirm_reset(as608_t *ctx);
 
 
-
 /* =========================================================================
  * Command APIs — common start contract
  * =========================================================================
- * Start returns admission status, never waits for a reply. A single job
- * deadline begins on successful admission. Keep pointed-to input immutable
- * and output storage valid until completion or abort. Output scalars and
- * lengths change only on successful ACK/stream; stream bytes may be partially
- * modified on failure. Poll as608_process(), then call as608_get_result().
- * No automatic retries.
+ * Start returns admission status, not command completion. Successful
+ * admission samples the clock once and arms one whole-job deadline;
+ * no UART or stream callback executes in a start call. Rejected admission
+ * preserves context and output. Argument checks may precede state checks.
+ * Keep borrowed inputs immutable and output storage valid and separate
+ * from driver storage until termination or successful abort; descriptors
+ * explicitly documented as copied may be reused after admission.
+ * Output scalars and committed lengths change only on successful results.
+ * Stream bytes and sink side effects can be partial on failure.
+ * Poll as608_process(), then use as608_get_result() and both result fields.
+ * No automatic retry, sensor-side rollback or database reservation.
  */
 /**
  * @brief Start password verification (PS_VfyPwd, opcode 0x13).

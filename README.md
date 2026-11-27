@@ -8,7 +8,7 @@ transfer. The unified non-blocking port still needs hardware validation.
 
 ## Completed API rebuild — 46 APIs
 
-Post-rebuild maintenance: stage 53, transaction implementation hardening.
+Post-rebuild maintenance: stage 54, public-header contract review.
 
 The five lifecycle APIs and forty-one command/job APIs covering thirty-one opcodes (BurnCode experimental) (0x13, 0x0F, 0x1D, 0x1F, 0x16, 0x01, 0x02, 0x03, 0x05, 0x04, 0x07, 0x08, 0x09, 0x06, 0x0C, 0x0D, 0x10, 0x11, 0x1B, 0x0A, 0x0B, 0x1C, 0x0E, 0x17, 0x12, 0x14, 0x15, 0x18, 0x19, 0x1E, 0x1A)
 are currently compiled from as608.c. Process supports simple,
@@ -65,6 +65,13 @@ Inconsistent RX metadata faults before UART I/O. Deadline precedence and
 callback budgets remain unchanged. Host tests inject invalid counters and
 oversized callback results; actual narrow-size_t target execution remains
 unverified.
+
+The public header groups related records, fixes lifecycle/progress values,
+and documents the distinction between admission, completion, result
+availability and sensor success (including drain-only downloads). All 46
+signatures and context members remain unchanged. A standalone C11/C++11
+contract test checks public constants, signatures and links all 46 symbols
+against C11-compiled objects. The obsolete planned-macro CI check is removed.
 
 All 23 baseline APIs and APIs 24–46 are now implemented (BurnCode experimental). CI builds independent packet and
 transaction tests, API 01–46 dedicated tests, and full command/async/fault
