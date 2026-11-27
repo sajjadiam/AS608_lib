@@ -399,7 +399,7 @@ typedef struct {
  *
  * @pre For a new device, zero-initialize the entire context (e.g.,
  * @code
- * static as608_t sensor; /* Zero-initialized in C and C++. */
+ * static as608_t sensor;
  * @endcode
  * ) and ensure a fresh physical link epoch. Calls must be serialized.
  * @post On success, ctx->state is AS608_STATE_IDLE and no job is active.
