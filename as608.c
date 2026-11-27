@@ -1,6 +1,5 @@
 /** @file as608.c @brief AS60x command and job lifecycle management. */
 #include "as608.h"
-#include "as608_transaction.h"
 
 #include <string.h>
 
@@ -92,6 +91,15 @@ enum as608_step {
     STEP_FREE_SLOT_INDEX_ACK
 };
 
+enum as608_layout {
+    DEVICE_INFO_OFFSET = 28,
+    INDEX_PAGE_SLOTS = 256,
+    INDEX_PAGE_COUNT = 4,
+    INDEX_MAX_SLOTS = INDEX_PAGE_SLOTS * INDEX_PAGE_COUNT
+};
+
+_Static_assert(STEP_FREE_SLOT_INDEX_ACK <= UINT8_MAX, "Job step must fit uint8_t");
+
 /* =========================================================================
  * Shared job lifecycle helpers
  * ========================================================================= */
@@ -110,6 +118,12 @@ static as608_progress_t finish(as608_t *ctx, uint8_t ack) {
     ctx->result.confirmation = ack;
     ctx->state = AS608_STATE_DONE;
     return AS608_COMPLETE;
+}
+
+/* Check ACK kind and allowed lengths before any payload access. */
+static bool ack_shape_valid(const as608_transaction_frame_t *frame, size_t full_length) {
+    return (frame->kind == AS608_PACKET_ACK) &&
+           ((frame->length == 1U) || (frame->length == full_length));
 }
 
 /* =========================================================================
@@ -304,6 +318,8 @@ static as608_status_t launch_payload(as608_t *ctx, const uint8_t *bytes, size_t 
 
     ctx->result = (as608_result_t){AS608_STATUS_NOT_INITIALIZED, 0U};
     ctx->reply_output = NULL;
+    ctx->input = NULL;
+    ctx->stream_data = NULL;
     ctx->stream_length = NULL;
     ctx->stream_write = NULL;
     ctx->stream_read = NULL;
@@ -373,7 +389,7 @@ static void decode_parameters(const uint8_t *data, as608_parameters_t *out) {
 static as608_progress_t accept_parameters_ack(as608_t *ctx) {
     const as608_transaction_frame_t frame = as608_transaction_received(&ctx->transaction);
 
-    if ((frame.kind != AS608_PACKET_ACK) || ((frame.length != 1U) && (frame.length != 17U))) {
+    if (!ack_shape_valid(&frame, 17U)) {
         return quarantine(ctx, AS608_STATUS_UNEXPECTED_REPLY);
     }
 
@@ -425,7 +441,7 @@ as608_status_t as608_read_parameters_start(as608_t *ctx, as608_parameters_t *out
 static as608_progress_t accept_u16_ack(as608_t *ctx) {
     const as608_transaction_frame_t frame = as608_transaction_received(&ctx->transaction);
 
-    if ((frame.kind != AS608_PACKET_ACK) || ((frame.length != 1U) && (frame.length != 3U))) {
+    if (!ack_shape_valid(&frame, 3U)) {
         return quarantine(ctx, AS608_STATUS_UNEXPECTED_REPLY);
     }
 
@@ -463,7 +479,7 @@ as608_status_t as608_get_template_count_start(as608_t *ctx, uint16_t *count) {
 static as608_progress_t accept_bytes32_ack(as608_t *ctx) {
     const as608_transaction_frame_t frame = as608_transaction_received(&ctx->transaction);
 
-    if ((frame.kind != AS608_PACKET_ACK) || ((frame.length != 1U) && (frame.length != 33U))) {
+    if (!ack_shape_valid(&frame, 33U)) {
         return quarantine(ctx, AS608_STATUS_UNEXPECTED_REPLY);
     }
 
@@ -480,7 +496,7 @@ static as608_progress_t accept_bytes32_ack(as608_t *ctx) {
 }
 
 as608_status_t as608_read_index_table_start(as608_t *ctx, uint8_t index_page, uint8_t *bitmap, size_t capacity) {
-    if ((index_page > 3U) || (capacity < 32U)) {
+    if ((index_page >= INDEX_PAGE_COUNT) || (capacity < INDEX_PAGE_SLOTS / 8U)) {
         return AS608_STATUS_INVALID_ARG;
     }
 
@@ -501,9 +517,9 @@ as608_status_t as608_read_index_table_start(as608_t *ctx, uint8_t index_page, ui
  */
 
 /* Initialize the destination buffer and offset for a data stream. */
-static void stream_setup(as608_t *ctx, as608_template_buffer_t output) {
-    ctx->stream_data = output.data;
-    ctx->stream_capacity = output.capacity;
+static void stream_setup(as608_t *ctx, uint8_t *data, size_t capacity) {
+    ctx->stream_data = data;
+    ctx->stream_capacity = capacity;
     ctx->stream_offset = 0U;
 }
 
@@ -516,7 +532,7 @@ static bool supported_size(size_t length) {
 static as608_progress_t accept_stream_ack(as608_t *ctx, enum as608_step data_step) {
     const as608_transaction_frame_t frame = as608_transaction_received(&ctx->transaction);
 
-    if ((frame.kind != AS608_PACKET_ACK) || (frame.length != 1U)) {
+    if (!ack_shape_valid(&frame, 1U)) {
         return quarantine(ctx, AS608_STATUS_UNEXPECTED_REPLY);
     }
 
@@ -528,10 +544,6 @@ static as608_progress_t accept_stream_ack(as608_t *ctx, enum as608_step data_ste
     as608_transaction_receive(&ctx->transaction, ctx->stream_capacity);
     return AS608_PENDING;
 }
-
-enum {
-    DEVICE_INFO_OFFSET = 28
-};
 
 /* Retain only the descriptor window and commit it after the full page. */
 static void collect_device_info(as608_t *ctx, const as608_transaction_frame_t *frame, size_t total, bool end) {
@@ -632,8 +644,7 @@ as608_status_t as608_read_information_page_start(as608_t *ctx, uint8_t *data, si
     const as608_status_t status = launch(ctx, &command);
 
     if (status == AS608_STATUS_OK) {
-        const as608_template_buffer_t output = {data, AS608_INFORMATION_PAGE_BYTES, 0U};
-        stream_setup(ctx, output);
+        stream_setup(ctx, data, AS608_INFORMATION_PAGE_BYTES);
     }
 
     return status;
@@ -745,7 +756,7 @@ static void store_u16(uint8_t *bytes, uint16_t value) {
 static as608_progress_t accept_match_ack(as608_t *ctx) {
     const as608_transaction_frame_t frame = as608_transaction_received(&ctx->transaction);
 
-    if ((frame.kind != AS608_PACKET_ACK) || ((frame.length != 1U) && (frame.length != 5U))) {
+    if (!ack_shape_valid(&frame, 5U)) {
         return quarantine(ctx, AS608_STATUS_UNEXPECTED_REPLY);
     }
 
@@ -848,9 +859,9 @@ static as608_status_t upload_start(as608_t *ctx, const command_t *command, as608
     const as608_status_t status = launch(ctx, command);
 
     if (status == AS608_STATUS_OK) {
-        stream_setup(ctx, *output);
-        ctx->stream_capacity = (output->capacity >= AS608_TEMPLATE_768_BYTES) ?
+        const size_t capacity = (output->capacity >= AS608_TEMPLATE_768_BYTES) ?
             AS608_TEMPLATE_768_BYTES : AS608_TEMPLATE_512_BYTES;
+        stream_setup(ctx, output->data, capacity);
         ctx->stream_length = &output->length;
     }
 
@@ -918,7 +929,8 @@ static as608_progress_t next_or_fault(as608_t *ctx, as608_status_t status) {
 /* Schedule one fragment, using END_DATA only for the last fragment. */
 static as608_status_t send_next_chunk(as608_t *ctx) {
     if (!ctx->input || (ctx->input_offset >= ctx->input_length) ||
-        (ctx->chunk_size == 0U) || (ctx->chunk_size > AS608_TRANSACTION_MAX_PAYLOAD_BYTES)) {
+        ((ctx->chunk_size != 32U) && (ctx->chunk_size != 64U) &&
+         (ctx->chunk_size != 128U) && (ctx->chunk_size != 256U))) {
         return AS608_STATUS_UNEXPECTED_REPLY;
     }
 
@@ -939,7 +951,7 @@ static as608_status_t send_next_chunk(as608_t *ctx) {
 static as608_progress_t accept_download_parameters(as608_t *ctx) {
     const as608_transaction_frame_t frame = as608_transaction_received(&ctx->transaction);
 
-    if ((frame.kind != AS608_PACKET_ACK) || ((frame.length != 1U) && (frame.length != 17U))) {
+    if (!ack_shape_valid(&frame, 17U)) {
         return quarantine(ctx, AS608_STATUS_UNEXPECTED_REPLY);
     }
 
@@ -978,7 +990,7 @@ static as608_progress_t accept_download_parameters(as608_t *ctx) {
 static as608_progress_t accept_download_ack(as608_t *ctx) {
     const as608_transaction_frame_t frame = as608_transaction_received(&ctx->transaction);
 
-    if ((frame.kind != AS608_PACKET_ACK) || (frame.length != 1U)) {
+    if (!ack_shape_valid(&frame, 1U)) {
         return quarantine(ctx, AS608_STATUS_UNEXPECTED_REPLY);
     }
 
@@ -1061,7 +1073,7 @@ as608_status_t as608_store_template_start(as608_t *ctx, as608_char_buffer_t buff
 static as608_progress_t accept_load_ack(as608_t *ctx) {
     const as608_transaction_frame_t frame = as608_transaction_received(&ctx->transaction);
 
-    if ((frame.kind != AS608_PACKET_ACK) || (frame.length != 1U)) {
+    if (!ack_shape_valid(&frame, 1U)) {
         return quarantine(ctx, AS608_STATUS_UNEXPECTED_REPLY);
     }
 
@@ -1226,8 +1238,7 @@ as608_status_t as608_upload_feature_start(as608_t *ctx, as608_char_buffer_t buff
     const as608_status_t status = launch(ctx, &command);
 
     if (status == AS608_STATUS_OK) {
-        const as608_template_buffer_t stream = {output->data, AS608_FEATURE_256_BYTES, 0U};
-        stream_setup(ctx, stream);
+        stream_setup(ctx, output->data, AS608_FEATURE_256_BYTES);
     }
 
     return status;
@@ -1275,9 +1286,7 @@ as608_status_t as608_upload_image_start(as608_t *ctx, const as608_stream_sink_t 
     const as608_status_t status = launch(ctx, &command);
 
     if (status == AS608_STATUS_OK) {
-        ctx->stream_data = NULL;
-        ctx->stream_capacity = request.length;
-        ctx->stream_offset = 0U;
+        stream_setup(ctx, NULL, request.length);
         ctx->stream_write = request.write;
         ctx->stream_user = request.user;
     }
@@ -1307,7 +1316,8 @@ static as608_progress_t poll_download_source(as608_t *ctx) {
     }
 
     if (!ctx->stream_read || (ctx->input_offset >= ctx->input_length) ||
-        (ctx->chunk_size < 64U) || (ctx->chunk_size > AS608_TRANSACTION_MAX_PAYLOAD_BYTES) ||
+        ((ctx->chunk_size != 64U) && (ctx->chunk_size != 128U) &&
+         (ctx->chunk_size != 256U)) ||
         (ctx->input_length - ctx->input_offset < ctx->chunk_size)) {
         return quarantine(ctx, AS608_STATUS_UNEXPECTED_REPLY);
     }
@@ -1320,7 +1330,8 @@ static as608_progress_t poll_download_source(as608_t *ctx) {
         return AS608_PENDING;
     }
 
-    if ((count < 0) || ((size_t)count != length)) {
+    /* Length is at most 256; compare without narrowing the callback result. */
+    if (count != (int32_t)length) {
         return quarantine(ctx, AS608_STATUS_IO_ERROR);
     }
 
@@ -1482,9 +1493,7 @@ as608_status_t as608_read_device_info_start(as608_t *ctx, as608_device_info_t *i
     const as608_status_t status = reply_start(ctx, &command, info);
 
     if (status == AS608_STATUS_OK) {
-        ctx->stream_data = NULL;
-        ctx->stream_capacity = AS608_INFORMATION_PAGE_BYTES;
-        ctx->stream_offset = 0U;
+        stream_setup(ctx, NULL, AS608_INFORMATION_PAGE_BYTES);
     }
 
     return status;
@@ -1520,7 +1529,7 @@ as608_status_t as608_set_password_start(as608_t *ctx, uint32_t password) {
 static as608_progress_t accept_u32_ack(as608_t *ctx) {
     const as608_transaction_frame_t frame = as608_transaction_received(&ctx->transaction);
 
-    if ((frame.kind != AS608_PACKET_ACK) || ((frame.length != 1U) && (frame.length != 5U))) {
+    if (!ack_shape_valid(&frame, 5U)) {
         return quarantine(ctx, AS608_STATUS_UNEXPECTED_REPLY);
     }
 
@@ -1557,8 +1566,7 @@ as608_status_t as608_get_random_code_start(as608_t *ctx, uint32_t *code) {
 static as608_progress_t accept_address_ack(as608_t *ctx) {
     const as608_transaction_frame_t frame = as608_transaction_received(&ctx->transaction);
 
-    if ((frame.kind != AS608_PACKET_ACK) || (frame.length != 1U) ||
-        (frame.data[0] != AS608_ACK_OK)) {
+    if (!ack_shape_valid(&frame, 1U) || (frame.data[0] != AS608_ACK_OK)) {
         return quarantine(ctx, AS608_STATUS_UNEXPECTED_REPLY);
     }
 
@@ -1652,7 +1660,7 @@ as608_status_t as608_read_notepad_start(as608_t *ctx, as608_notepad_page_t *page
 static as608_progress_t accept_gpio_ack(as608_t *ctx) {
     const as608_transaction_frame_t frame = as608_transaction_received(&ctx->transaction);
 
-    if ((frame.kind != AS608_PACKET_ACK) || ((frame.length != 1U) && (frame.length != 2U))) {
+    if (!ack_shape_valid(&frame, 2U)) {
         return quarantine(ctx, AS608_STATUS_UNEXPECTED_REPLY);
     }
 
@@ -1702,7 +1710,7 @@ static as608_progress_t finish_burn(as608_t *ctx, uint8_t ack) {
 static as608_progress_t accept_burn_ack(as608_t *ctx) {
     const as608_transaction_frame_t frame = as608_transaction_received(&ctx->transaction);
 
-    if ((frame.kind != AS608_PACKET_ACK) || (frame.length != 1U)) {
+    if (!ack_shape_valid(&frame, 1U)) {
         return quarantine(ctx, AS608_STATUS_UNEXPECTED_REPLY);
     }
 
@@ -1812,7 +1820,7 @@ static as608_progress_t poll_enroll_wait(as608_t *ctx) {
 static as608_progress_t accept_enroll_ack(as608_t *ctx) {
     const as608_transaction_frame_t frame = as608_transaction_received(&ctx->transaction);
 
-    if ((frame.kind != AS608_PACKET_ACK) || (frame.length != 1U)) {
+    if (!ack_shape_valid(&frame, 1U)) {
         return quarantine(ctx, AS608_STATUS_UNEXPECTED_REPLY);
     }
 
@@ -1900,7 +1908,7 @@ as608_status_t as608_enroll_two_scan_start(as608_t *ctx, const as608_enroll_requ
 static as608_progress_t accept_identify_range_ack(as608_t *ctx) {
     const as608_transaction_frame_t frame = as608_transaction_received(&ctx->transaction);
 
-    if ((frame.kind != AS608_PACKET_ACK) || (frame.length != 1U)) {
+    if (!ack_shape_valid(&frame, 1U)) {
         return quarantine(ctx, AS608_STATUS_UNEXPECTED_REPLY);
     }
 
@@ -1951,19 +1959,13 @@ as608_status_t as608_identify_range_start(as608_t *ctx, as608_search_t *search) 
  * related R503 manual; verify on the target before using the result.
  */
 
-enum {
-    INDEX_PAGE_SLOTS = 256,
-    INDEX_PAGE_COUNT = 4,
-    INDEX_MAX_SLOTS = INDEX_PAGE_SLOTS * INDEX_PAGE_COUNT
-};
-
 /* Read capacity, then inspect one validated bitmap at a time in wire order. */
 static as608_progress_t accept_free_slot_ack(as608_t *ctx) {
     const as608_transaction_frame_t frame = as608_transaction_received(&ctx->transaction);
     const bool parameters = (ctx->step == STEP_FREE_SLOT_PARAMS_ACK);
     const size_t expected = parameters ? 17U : 33U;
 
-    if ((frame.kind != AS608_PACKET_ACK) || ((frame.length != 1U) && (frame.length != expected))) {
+    if (!ack_shape_valid(&frame, expected)) {
         return quarantine(ctx, AS608_STATUS_UNEXPECTED_REPLY);
     }
 
@@ -2042,7 +2044,7 @@ as608_status_t as608_find_free_slot_start(as608_t *ctx, as608_free_slot_t *slot)
 static as608_progress_t accept_simple_ack(as608_t *ctx) {
     const as608_transaction_frame_t frame = as608_transaction_received(&ctx->transaction);
 
-    if ((frame.kind != AS608_PACKET_ACK) || (frame.length != 1U)) {
+    if (!ack_shape_valid(&frame, 1U)) {
         return quarantine(ctx, AS608_STATUS_UNEXPECTED_REPLY);
     }
 
@@ -2148,9 +2150,7 @@ as608_progress_t as608_process(as608_t *ctx) {
                 return download_sent(ctx);
             }
 
-            if ((ctx->step == STEP_INFO_DATA) || (ctx->step == STEP_UP_DATA) || (ctx->step == STEP_FEATURE_DATA) ||
-                (ctx->step == STEP_IMAGE_DATA) || (ctx->step == STEP_DEVICE_INFO_DATA) ||
-                (ctx->step == STEP_DOWN_DRAIN)) {
+            if (limit == 0U) {
                 return quarantine(ctx, AS608_STATUS_UNEXPECTED_REPLY);
             }
 

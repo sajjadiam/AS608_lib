@@ -5,11 +5,6 @@
 #include <stdio.h>
 #include <string.h>
 
-/* Internal test fixture: the public start APIs are not active yet.
- * This value is the private STEP_SIMPLE_ACK code in as608.c.
- */
-#define TEST_SIMPLE_ACK_STEP 1U
-
 typedef struct {
     uint8_t tx[16U];
     uint8_t rx[16U];
@@ -72,18 +67,9 @@ static void setup(as608_t *ctx, mock_t *mock)
     assert(as608_init(ctx, &config) == AS608_STATUS_OK);
 }
 
-static void arm(as608_t *ctx)
-{
-    const uint8_t command = 0x01U;
-    const as608_transaction_frame_t frame = {
-        AS608_PACKET_COMMAND, &command, 1U
-    };
-    assert(as608_transaction_send(&ctx->transaction, &frame) ==
-           AS608_STATUS_OK);
-    as608_transaction_begin(&ctx->transaction);
-    ctx->step = TEST_SIMPLE_ACK_STEP;
-    ctx->state = AS608_STATE_BUSY;
-    ctx->result.status = AS608_STATUS_NOT_INITIALIZED;
+/* Admit a real public job instead of constructing a private step. */
+static void arm(as608_t *ctx) {
+    assert(as608_capture_image_start(ctx) == AS608_STATUS_OK);
 }
 
 static void prepare_reply(mock_t *mock, uint8_t kind, uint8_t ack)

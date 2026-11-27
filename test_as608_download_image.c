@@ -354,6 +354,35 @@ static void test_admission(void) {
     assert(state.calls == 0U && ctx.input_offset == sizeof(feature.data));
 }
 
+/* Reject impossible source chunk sizes before invoking the callback. */
+static void test_source_metadata(void) {
+    const uint16_t invalid[] = {0U, 32U, 63U, 65U, 127U, 255U, 257U, UINT16_MAX};
+    for (size_t i = 0U; i < sizeof(invalid) / sizeof(invalid[0]); ++i) {
+        mock_t mock = {0};
+        as608_t ctx = {0};
+        as608_result_t result;
+        source_t state = {256U, 0U, 0U, 1U, 0};
+        const as608_stream_source_t source = {&state, produce, state.length};
+        setup(&ctx, &mock);
+        parameters(&mock, AS608_ACK_OK, 1U, 17U);
+        append_ack(&mock, AS608_ACK_OK);
+        assert(as608_download_image_start(&ctx, &source) == AS608_STATUS_OK);
+
+        for (unsigned int poll = 0U; poll < 100U && state.calls == 0U; ++poll) {
+            assert(step(&ctx, &mock) == AS608_PENDING);
+        }
+
+        assert(state.calls == 1U && state.offset == 0U && ctx.input_offset == 0U);
+        ctx.chunk_size = invalid[i]; /* White-box fault injection only. */
+        const unsigned int io = mock.io_calls;
+        const size_t sent = mock.tx_length;
+        assert(step(&ctx, &mock) == AS608_FAILED);
+        assert(as608_get_result(&ctx, &result) && result.status == AS608_STATUS_UNEXPECTED_REPLY);
+        assert(ctx.state == AS608_STATE_DESYNCHRONIZED);
+        assert(state.calls == 1U && mock.io_calls == io && mock.tx_length == sent);
+    }
+}
+
 int main(void) {
     for (uint16_t code = 1U; code <= 3U; ++code) {
         test_success(256U, code);
@@ -369,8 +398,14 @@ int main(void) {
     test_source_fault(-1, false);
     test_source_fault(1, false);
     test_source_fault(65, false);
+    test_source_fault(INT32_MIN, false);
+    test_source_fault(INT32_MAX, false);
+    test_source_fault(65536, false);
+    test_source_fault(65537, false);
+    test_source_fault(65600, false); /* Would narrow to 64 on a 16-bit size_t. */
     test_source_fault(0, false);
     test_source_fault(0, true);
+    test_source_metadata();
     test_admission();
 
     puts("as608 API 30 download_image: PASS");

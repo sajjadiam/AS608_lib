@@ -330,8 +330,9 @@ static void test_fault(unsigned int fault) {
         append_ack(&mock, AS608_ACK_OK);
         pending(&ctx, &mock, 100U);
         mock.now = 50U;
-    } else if (fault <= 3U) {
-        source.error = fault == 1U ? -1 : fault == 2U ? 1 : 257;
+    } else if ((fault <= 3U) || (fault >= 7U)) {
+        const int32_t invalid[] = {INT32_MIN, INT32_MAX, 65536, 65792};
+        source.error = (fault >= 7U) ? invalid[fault - 7U] : (fault == 1U ? -1 : fault == 2U ? 1 : 257);
         append_ack(&mock, AS608_ACK_OK);
         expected = AS608_STATUS_IO_ERROR;
     } else {
@@ -375,7 +376,7 @@ int main(void) {
         test_ack(code, 1U, true);
         test_ack(code, 2U, true);
     }
-    for (unsigned int fault = 0U; fault < 7U; ++fault) {
+    for (unsigned int fault = 0U; fault < 11U; ++fault) {
         test_fault(fault);
     }
     puts("as608 API 43 burn_code experimental profile: PASS");
