@@ -74,7 +74,8 @@ typedef struct {
 
 /**
  * @brief Host frame descriptor; not a wire representation.
- * @details Send borrows data only during the call and copies its contents.
+ * @details Send borrows external data only during the call and copies it.
+ * Alternatively, data may be exactly the idle TX payload view.
  * A received descriptor is a read-only view of context-owned RX storage.
  * length excludes header and checksum in either direction.
  */
@@ -135,6 +136,20 @@ void as608_transaction_init(as608_transaction_t *txn, const as608_config_t *conf
 void as608_transaction_begin(as608_transaction_t *txn);
 
 /**
+ * @brief Borrow writable payload storage for direct frame preparation.
+ * @param[in,out] txn Initialized context; NULL is permitted.
+ * @return View of exactly AS608_TRANSACTION_MAX_PAYLOAD_BYTES writable
+ * bytes when idle; NULL for an active phase or NULL context.
+ * @note No phase change, callbacks, or deadline update. The caller may
+ * write only the intended payload and must not retain the view across
+ * other transport operations. Submit the exact pointer to send() after
+ * producing a complete payload, or discard the view without sending.
+ * @pre Serialized access; command layer has admitted a valid job.
+ * @warning Never retain this view in a callback or use it for async DMA.
+ */
+uint8_t *as608_transaction_tx_payload(as608_transaction_t *txn);
+
+/**
  * @brief Encode and queue one frame in context-owned TX storage.
  * @param[in,out] txn Initialized idle-phase context.
  * @param[in] frame Readable descriptor with a valid packet kind.
@@ -143,11 +158,15 @@ void as608_transaction_begin(as608_transaction_t *txn);
  * @retval AS608_STATUS_INVALID_ARG Null pointer, invalid payload size,
  * missing nonempty payload or kind other than COMMAND/DATA/END_DATA.
  * @retval AS608_STATUS_BUSY An earlier transport phase is active.
- * @pre Non-null pointers valid; frame and payload do not overlap TX storage
- * or fields modified during preparation. Caller chooses semantic lengths.
+ * @pre Non-null pointers valid; frame descriptor does not overlap modified
+ * storage. Payload either points exactly to the view returned by
+ * tx_payload() for this context, or does not overlap TX storage or fields
+ * modified during preparation. Partial TX overlap is not supported.
+ * Caller chooses semantic lengths and initializes all submitted bytes.
  * @note Rejected preparation preserves context and invokes no callbacks.
- * @post On success the complete frame is copied, TX phase armed, and
- * the input storage may be reused. The original deadline is unchanged.
+ * @post On success the complete frame is encoded and TX phase armed;
+ * external input storage may be reused. An in-place payload is no longer
+ * writable by the caller. The original deadline is unchanged.
  * @note The actual UART transmission occurs in process calls.
  */
 as608_status_t as608_transaction_send(as608_transaction_t *txn,

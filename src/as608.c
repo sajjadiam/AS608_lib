@@ -1217,7 +1217,12 @@ static as608_progress_t poll_download_source(as608_t *ctx) {
         return quarantine(ctx, AS608_STATUS_UNEXPECTED_REPLY);
     }
 
-    uint8_t data[AS608_TRANSACTION_MAX_PAYLOAD_BYTES];
+    uint8_t *const data = as608_transaction_tx_payload(&ctx->transaction);
+
+    if (!data) {
+        return quarantine(ctx, AS608_STATUS_UNEXPECTED_REPLY);
+    }
+
     const size_t length = ctx->chunk_size;
     const int32_t count = ctx->stream_read(ctx->stream_user, data, length);
 

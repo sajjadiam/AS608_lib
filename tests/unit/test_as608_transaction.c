@@ -423,6 +423,50 @@ static void test_send_bounds(void) {
     assert(mock.tx_length == 11U && mock.tx[8] == 2U && mock.tx[10] == 10U);
 }
 
+/* Verify direct payload encoding, busy rejection and exact wire equivalence. */
+static void test_in_place_send(void) {
+    const size_t lengths[] = {0U, 1U, 64U, 128U, 256U};
+    assert(as608_transaction_tx_payload(NULL) == NULL);
+    for (size_t i = 0U; i < sizeof(lengths) / sizeof(lengths[0]); ++i) {
+        mock_t direct_mock = {.burst = 17U};
+        mock_t copy_mock = {.burst = 17U};
+        as608_transaction_t direct;
+        as608_transaction_t copy;
+        uint8_t bytes[256U];
+        setup(&direct, &direct_mock);
+        setup(&copy, &copy_mock);
+        uint8_t *const payload = as608_transaction_tx_payload(&direct);
+        assert(payload == direct.tx_frame + AS608_PACKET_HEADER_BYTES);
+        for (size_t j = 0U; j < lengths[i]; ++j) {
+            bytes[j] = (uint8_t)(j * 13U + 7U);
+            payload[j] = bytes[j];
+        }
+        const as608_transaction_frame_t direct_frame = {
+            AS608_PACKET_END_DATA, payload, lengths[i]
+        };
+        const as608_transaction_frame_t copy_frame = {
+            AS608_PACKET_END_DATA, bytes, lengths[i]
+        };
+        assert(as608_transaction_send(&direct, &direct_frame) == AS608_STATUS_OK);
+        assert(as608_transaction_send(&copy, &copy_frame) == AS608_STATUS_OK);
+        assert(as608_transaction_tx_payload(&direct) == NULL);
+        assert(as608_transaction_send(&direct, &direct_frame) == AS608_STATUS_BUSY);
+        assert(direct_mock.calls == 0U && direct_mock.clock_calls == 1U);
+        assert(run(&direct, &direct_mock).event == AS608_TXN_SENT);
+        assert(run(&copy, &copy_mock).event == AS608_TXN_SENT);
+        assert(direct_mock.tx_length == lengths[i] + AS608_PACKET_OVERHEAD_BYTES);
+        assert(direct_mock.tx_length == copy_mock.tx_length);
+        assert(memcmp(direct_mock.tx, copy_mock.tx, direct_mock.tx_length) == 0);
+        assert(memcmp(direct_mock.tx + AS608_PACKET_HEADER_BYTES,
+                      bytes, lengths[i]) == 0);
+        assert(as608_transaction_tx_payload(&direct) == payload);
+        as608_transaction_receive(&direct, 1U);
+        assert(as608_transaction_tx_payload(&direct) == NULL);
+        as608_transaction_drain(&copy);
+        assert(as608_transaction_tx_payload(&copy) == NULL);
+    }
+}
+
 /* Reject invalid full-width kinds and active-phase replacement atomically. */
 static void test_send_admission(void) {
     mock_t mock = {0};
@@ -544,6 +588,7 @@ int main(void)
     test_receive_address();
     test_receive_bounds();
     test_send_bounds();
+    test_in_place_send();
     test_send_admission();
     test_counter_faults();
     test_deadline_precedence();

@@ -262,6 +262,32 @@ static void test_source_metadata(void) {
     }
 }
 
+/* An active transport must prevent the source from being called again. */
+static void test_source_busy_transport(void) {
+    mock_t mock = {0};
+    as608_t ctx = {0};
+    as608_result_t result;
+    source_t state = {256U, 0U, 0U, 1U, 0};
+    const as608_stream_source_t source = {&state, produce, state.length};
+    setup(&ctx, &mock);
+    parameters(&mock, AS608_ACK_OK, 1U, 17U);
+    test_append_ack(&mock, AS608_ACK_OK);
+    assert(as608_download_image_start(&ctx, &source) == AS608_STATUS_OK);
+    for (unsigned int poll = 0U; poll < 100U && state.calls == 0U; ++poll) {
+        assert(test_step(&ctx, &mock) == AS608_PENDING);
+    }
+    assert(state.calls == 1U && state.offset == 0U);
+    as608_transaction_receive(&ctx.transaction, 1U); /* Fault injection. */
+    const unsigned int io = mock.io_calls;
+    const size_t sent = mock.tx_length;
+    assert(test_step(&ctx, &mock) == AS608_FAILED);
+    assert(as608_get_result(&ctx, &result) &&
+           result.status == AS608_STATUS_UNEXPECTED_REPLY);
+    assert(ctx.state == AS608_STATE_DESYNCHRONIZED);
+    assert(state.calls == 1U && state.offset == 0U && ctx.input_offset == 0U);
+    assert(mock.io_calls == io && mock.tx_length == sent);
+}
+
 /* Exercise the last source fragment near SIZE_MAX with a synthetic prefix. */
 static void test_size_max_boundary(void) {
     mock_t mock = {0};
@@ -320,6 +346,7 @@ int main(void) {
     test_source_fault(0, false);
     test_source_fault(0, true);
     test_source_metadata();
+    test_source_busy_transport();
     test_admission();
 
     puts("as608 API 30 download_image: PASS");

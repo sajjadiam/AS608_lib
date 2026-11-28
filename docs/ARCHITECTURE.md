@@ -97,7 +97,11 @@ command context. Source polling uses a packet-sized local buffer; actual
 peak stack includes callers, compiler-generated frames and interrupts.
 No image-sized internal allocation or dynamic allocation is used.
 
-TX frame preparation copies caller data. Accepted TX bytes belong to
+TX frame preparation copies external caller data. Download Image and Burn
+Code stream sources instead fill the idle TX payload view directly; the
+transport encodes the header and checksum without copying that payload.
+The view is borrowed only during the callback and never while a transport
+phase is active. Accepted TX bytes belong to
 the port. RX views borrow context storage and expire before the next
 receive or reset. Stream callbacks borrow buffers only for their call.
 Caller-owned output, immutable input and referenced user state follow

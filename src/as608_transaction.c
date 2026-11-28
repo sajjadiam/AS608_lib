@@ -48,6 +48,13 @@ void as608_transaction_begin(as608_transaction_t *txn) {
     txn->started_ms = txn->config.port.clock_ms(txn->config.port.user);
 }
 
+uint8_t *as608_transaction_tx_payload(as608_transaction_t *txn) {
+    if (!txn || txn->wire_phase != WIRE_IDLE) {
+        return NULL;
+    }
+    return txn->tx_frame + AS608_PACKET_HEADER_BYTES;
+}
+
 as608_status_t as608_transaction_send(as608_transaction_t *txn,
                                     const as608_transaction_frame_t *frame) {
     if (!txn || !frame ||
@@ -69,12 +76,12 @@ as608_status_t as608_transaction_send(as608_transaction_t *txn,
     if (status != AS608_STATUS_OK) {
         return status;
     }
-    if (frame->length != 0U) {
-        (void)memcpy(txn->tx_frame + AS608_PACKET_HEADER_BYTES,
-                     frame->data, frame->length);
+    uint8_t *const payload = txn->tx_frame + AS608_PACKET_HEADER_BYTES;
+    if (frame->length != 0U && frame->data != payload) {
+        (void)memcpy(payload, frame->data, frame->length);
     }
     const uint16_t checksum = as608_packet_checksum_update(
-        as608_packet_checksum_begin(&header), frame->data, frame->length);
+        as608_packet_checksum_begin(&header), payload, frame->length);
     as608_packet_checksum_encode(checksum,
         txn->tx_frame + AS608_PACKET_HEADER_BYTES + frame->length);
     txn->tx_len = AS608_PACKET_OVERHEAD_BYTES + frame->length;
