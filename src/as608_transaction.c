@@ -3,6 +3,10 @@
 
 #include <string.h>
 
+/* =========================================================================
+ * Internal wire phases
+ * ========================================================================= */
+
 enum as608_wire_phase {
     WIRE_IDLE = 0,
     WIRE_TX,
@@ -11,13 +15,18 @@ enum as608_wire_phase {
     WIRE_TX_DRAIN
 };
 
+/* =========================================================================
+ * Shared transport event helpers
+ * ========================================================================= */
+
 /* Publish a transport event and disarm the phase on termination. */
 static as608_transaction_result_t event(as608_transaction_t *txn,
-                                        as608_transaction_event_t code,
-                                        as608_status_t status) {
+                                       as608_transaction_event_t code,
+                                       as608_status_t status) {
     if (code != AS608_TXN_PENDING) {
         txn->wire_phase = WIRE_IDLE;
     }
+
     return (as608_transaction_result_t){code, status};
 }
 
@@ -30,6 +39,10 @@ static as608_transaction_result_t pending(as608_transaction_t *txn) {
 static as608_transaction_result_t fault(as608_transaction_t *txn, as608_status_t status) {
     return event(txn, AS608_TXN_FAULT, status);
 }
+
+/* =========================================================================
+ * Configuration and job initialization
+ * ========================================================================= */
 
 bool as608_transaction_config_valid(const as608_config_t *config) {
     return config != NULL && config->port.try_read != NULL &&
@@ -48,15 +61,21 @@ void as608_transaction_begin(as608_transaction_t *txn) {
     txn->started_ms = txn->config.port.clock_ms(txn->config.port.user);
 }
 
+/* =========================================================================
+ * TX frame preparation
+ * ========================================================================= */
+
+/* Borrow the idle TX payload for direct stream preparation. */
 uint8_t *as608_transaction_tx_payload(as608_transaction_t *txn) {
     if (!txn || txn->wire_phase != WIRE_IDLE) {
         return NULL;
     }
+
     return txn->tx_frame + AS608_PACKET_HEADER_BYTES;
 }
 
 as608_status_t as608_transaction_send(as608_transaction_t *txn,
-                                    const as608_transaction_frame_t *frame) {
+                                      const as608_transaction_frame_t *frame) {
     if (!txn || !frame ||
         (frame->length > AS608_TRANSACTION_MAX_PAYLOAD_BYTES) ||
         ((frame->length != 0U) && !frame->data) ||
@@ -69,6 +88,7 @@ as608_status_t as608_transaction_send(as608_transaction_t *txn,
     if (txn->wire_phase != WIRE_IDLE) {
         return AS608_STATUS_BUSY;
     }
+
     const as608_packet_header_t header = {
         txn->config.device_address, (uint8_t)frame->kind, (uint16_t)frame->length
     };
@@ -76,19 +96,28 @@ as608_status_t as608_transaction_send(as608_transaction_t *txn,
     if (status != AS608_STATUS_OK) {
         return status;
     }
+
     uint8_t *const payload = txn->tx_frame + AS608_PACKET_HEADER_BYTES;
+
     if (frame->length != 0U && frame->data != payload) {
         (void)memcpy(payload, frame->data, frame->length);
     }
+
     const uint16_t checksum = as608_packet_checksum_update(
         as608_packet_checksum_begin(&header), payload, frame->length);
     as608_packet_checksum_encode(checksum,
         txn->tx_frame + AS608_PACKET_HEADER_BYTES + frame->length);
+
     txn->tx_len = AS608_PACKET_OVERHEAD_BYTES + frame->length;
     txn->tx_pos = 0U;
     txn->wire_phase = WIRE_TX;
+
     return AS608_STATUS_OK;
 }
+
+/* =========================================================================
+ * RX phase preparation
+ * ========================================================================= */
 
 void as608_transaction_receive(as608_transaction_t *txn, size_t limit) {
     as608_transaction_receive_at(txn, limit, txn->config.device_address);
@@ -103,9 +132,17 @@ void as608_transaction_receive_at(as608_transaction_t *txn, size_t limit, uint32
     txn->wire_phase = WIRE_RX_HEADER;
 }
 
+/* =========================================================================
+ * Physical TX drain preparation
+ * ========================================================================= */
+
 void as608_transaction_drain(as608_transaction_t *txn) {
     txn->wire_phase = WIRE_TX_DRAIN;
 }
+
+/* =========================================================================
+ * RX frame validation helpers
+ * ========================================================================= */
 
 /* Validate the header before arming bounded body reception. */
 static as608_status_t parse_header(as608_transaction_t *txn) {
@@ -116,19 +153,23 @@ static as608_status_t parse_header(as608_transaction_t *txn) {
     if (status != AS608_STATUS_OK) {
         return status;
     }
+
     if (header.kind != (uint8_t)AS608_PACKET_ACK &&
         header.kind != (uint8_t)AS608_PACKET_DATA &&
         header.kind != (uint8_t)AS608_PACKET_END_DATA) {
         return AS608_STATUS_UNEXPECTED_REPLY;
     }
+
     if ((size_t)header.payload_size > txn->rx_limit) {
         return AS608_STATUS_UNEXPECTED_REPLY;
     }
+
     txn->rx_kind = header.kind;
     txn->rx_payload_len = header.payload_size;
     txn->rx_body_len = (size_t)header.payload_size + AS608_PACKET_CHECKSUM_BYTES;
     txn->rx_body_pos = 0U;
     txn->wire_phase = WIRE_RX_BODY;
+
     return AS608_STATUS_OK;
 }
 
@@ -144,6 +185,10 @@ static bool checksum_valid(const as608_transaction_t *txn) {
         checksum, txn->rx_body + txn->rx_payload_len);
 }
 
+/* =========================================================================
+ * Cooperative TX phase
+ * ========================================================================= */
+
 /* Accept one ordered TX prefix after validating frame counters. */
 static as608_transaction_result_t transmit_step(as608_transaction_t *txn) {
     if ((txn->tx_len < AS608_PACKET_OVERHEAD_BYTES) ||
@@ -155,14 +200,21 @@ static as608_transaction_result_t transmit_step(as608_transaction_t *txn) {
     const size_t count = txn->tx_len - txn->tx_pos;
     const int32_t n = txn->config.port.try_write(
         txn->config.port.user, txn->tx_frame + txn->tx_pos, count);
+
     /* Check the full callback value before narrowing to size_t. */
     if ((n < 0) || ((uint32_t)n > (uint32_t)count)) {
         return fault(txn, AS608_STATUS_IO_ERROR);
     }
+
     txn->tx_pos += (size_t)n;
+
     return txn->tx_pos == txn->tx_len ?
         event(txn, AS608_TXN_SENT, AS608_STATUS_OK) : pending(txn);
 }
+
+/* =========================================================================
+ * Cooperative RX phases
+ * ========================================================================= */
 
 /* Receive one header prefix and validate the completed header. */
 static as608_transaction_result_t header_step(as608_transaction_t *txn) {
@@ -173,14 +225,18 @@ static as608_transaction_result_t header_step(as608_transaction_t *txn) {
     const size_t count = sizeof(txn->rx_header) - txn->rx_header_pos;
     const int32_t n = txn->config.port.try_read(
         txn->config.port.user, txn->rx_header + txn->rx_header_pos, count);
+
     /* Check the full callback value before narrowing to size_t. */
     if ((n < 0) || ((uint32_t)n > (uint32_t)count)) {
         return fault(txn, AS608_STATUS_IO_ERROR);
     }
+
     txn->rx_header_pos += (size_t)n;
+
     if (txn->rx_header_pos != sizeof(txn->rx_header)) {
         return pending(txn);
     }
+
     const as608_status_t status = parse_header(txn);
     return status == AS608_STATUS_OK ? pending(txn) : fault(txn, status);
 }
@@ -201,38 +257,66 @@ static as608_transaction_result_t payload_step(as608_transaction_t *txn) {
     const size_t count = txn->rx_body_len - txn->rx_body_pos;
     const int32_t n = txn->config.port.try_read(
         txn->config.port.user, txn->rx_body + txn->rx_body_pos, count);
+
     /* Check the full callback value before narrowing to size_t. */
     if ((n < 0) || ((uint32_t)n > (uint32_t)count)) {
         return fault(txn, AS608_STATUS_IO_ERROR);
     }
+
     txn->rx_body_pos += (size_t)n;
+
     if (txn->rx_body_pos != txn->rx_body_len) {
         return pending(txn);
     }
+
     if (!checksum_valid(txn)) {
         return fault(txn, AS608_STATUS_CHECKSUM_ERROR);
     }
+
     return event(txn, AS608_TXN_RECEIVED, AS608_STATUS_OK);
 }
+
+/* =========================================================================
+ * Cooperative TX drain phase
+ * ========================================================================= */
 
 /* Poll physical TX completion without waiting. */
 static as608_transaction_result_t drain_step(as608_transaction_t *txn) {
     const int32_t idle = txn->config.port.tx_idle(txn->config.port.user);
+
     if (idle == 0) {
         return pending(txn);
     }
+
     if (idle != 1) {
         return fault(txn, AS608_STATUS_IO_ERROR);
     }
+
     return event(txn, AS608_TXN_DRAINED, AS608_STATUS_OK);
 }
+
+/* =========================================================================
+ * Received frame access
+ * ========================================================================= */
+
+as608_transaction_frame_t as608_transaction_received(const as608_transaction_t *txn) {
+    return (as608_transaction_frame_t){
+        (as608_packet_kind_t)txn->rx_kind, txn->rx_body, txn->rx_payload_len
+    };
+}
+
+/* =========================================================================
+ * Transport process dispatcher
+ * ========================================================================= */
 
 as608_transaction_result_t as608_transaction_process(as608_transaction_t *txn) {
     const uint32_t elapsed = txn->config.port.clock_ms(txn->config.port.user) -
                              txn->started_ms;
+
     if (elapsed >= txn->config.timeout_ms) {
         return fault(txn, AS608_STATUS_TIMEOUT);
     }
+
     switch (txn->wire_phase) {
         case WIRE_TX: {
             return transmit_step(txn);
@@ -250,10 +334,4 @@ as608_transaction_result_t as608_transaction_process(as608_transaction_t *txn) {
             return fault(txn, AS608_STATUS_UNEXPECTED_REPLY);
         }
     }
-}
-
-as608_transaction_frame_t as608_transaction_received(const as608_transaction_t *txn) {
-    return (as608_transaction_frame_t){
-        (as608_packet_kind_t)txn->rx_kind, txn->rx_body, txn->rx_payload_len
-    };
 }
