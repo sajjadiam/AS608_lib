@@ -45,8 +45,22 @@ cmake --build build/core --parallel 2
 
 A standalone native configuration enables host tests by default.
 Cross builds and subdirectory consumers default to tests disabled.
-Use the application's toolchain file for cross compilation; this library
-does not supply MCU startup code, linker scripts or platform flags.
+For the reference Cortex-M3 cross-build audit, use the supplied
+`cmake/toolchains/arm-cortex-m3-gcc.cmake` with ARM GNU Toolchain and
+target C library (newlib). Application firmware should use its own
+toolchain configuration, startup code and linker script.
+
+```sh
+cmake -S . -B build/arm \
+    -DCMAKE_TOOLCHAIN_FILE=cmake/toolchains/arm-cortex-m3-gcc.cmake \
+    -DCMAKE_BUILD_TYPE=MinSizeRel -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
+    -DAS608_BUILD_TESTS=OFF
+cmake --build build/arm --parallel 2
+bash tools/check_arm_build.sh build/arm
+```
+
+The audit ELF is for link validation only; it is not bootable firmware.
+See [target build verification](docs/TESTING.md#cortex-m3-cross-build).
 
 ### Add to an application
 

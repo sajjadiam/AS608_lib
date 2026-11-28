@@ -1,0 +1,42 @@
+name: ARM Cortex-M3 cross build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  cortex-m3:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install ARM GNU toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends gcc-arm-none-eabi binutils-arm-none-eabi libnewlib-arm-none-eabi
+      - name: Configure and build C11 archive
+        run: |
+          cmake -S . -B build/arm -DCMAKE_TOOLCHAIN_FILE=cmake/toolchains/arm-cortex-m3-gcc.cmake -DCMAKE_BUILD_TYPE=MinSizeRel -DCMAKE_EXPORT_COMPILE_COMMANDS=ON -DAS608_BUILD_TESTS=OFF
+          cmake --build build/arm --parallel 2 --verbose
+      - name: Verify ARM archive and full-core link
+        run: bash tools/check_arm_build.sh build/arm
+      - name: Upload cross-build evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cortex-m3-build
+          path: |
+            build/arm/libas608.a
+            build/arm/compile_commands.json
+            build/arm/audit/
+          if-no-files-found: error
+          retention-days: 14

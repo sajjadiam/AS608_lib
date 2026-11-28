@@ -219,7 +219,8 @@ run does not establish target compatibility, timing or memory bounds.
 
 ## Remaining validation
 
-- [ ] ARM Cortex-M3 cross build and measured code size, RAM, stack and service latency.
+- [ ] Verify ARM Cortex-M3 cross-build evidence from the [ARM CI workflow](.github/workflows/arm-cortex-m3.yml).
+- [ ] Measure target code size, RAM, stack and service latency; see [target audit](docs/TESTING.md#cortex-m3-cross-build).
 - [ ] STM32F103 UART IT/DMA adapter: owned TX queue, RX ring, error propagation and synchronization.
 - [ ] Non-blocking physical recovery and current-core target integration.
 - [ ] Verify no-final-ACK DownChar/DownImage profile before transfers or composite writes.

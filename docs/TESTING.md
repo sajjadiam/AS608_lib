@@ -46,6 +46,36 @@ artifacts aid diagnosis; failed jobs are not ignored. A passed host run
 is evidence of the executed paths only, not proof of correctness for all
 inputs, all targets or every firmware variant.
 
+## Cortex-M3 cross build
+
+The separate [ARM workflow](../.github/workflows/arm-cortex-m3.yml)
+installs the ARM GNU C compiler, binutils and newlib on Ubuntu 24.04.
+Its [reference toolchain](../cmake/toolchains/arm-cortex-m3-gcc.cmake)
+targets Cortex-M3, Thumb, soft-float ABI and freestanding ISO C11.
+MinSizeRel selects a size-oriented baseline; compile_commands.json
+records the effective compiler flags. Compiler/package versions may
+change with the runner; use the recorded toolchain version for comparisons.
+
+Follow the README cross-build commands and run
+`bash tools/check_arm_build.sh build/arm` from the repository root.
+The check verifies all three archive members' ELF32 ARMv7-M/Thumb-2
+attributes, independently syntax-checks five C header contracts for the
+target ABI, and forces all archive objects into a link-check ELF using
+only newlib and libgcc. Unresolved references in the final ELF fail the
+check. The archive's undefined-symbol list may legitimately contain
+inter-object and C-runtime references.
+
+CI retains the archive, flags, toolchain version, ELF attributes,
+symbol lists, linker map and link-check ELF. This ELF has no board
+startup/vector table or board memory layout and must not be flashed.
+No target execution, application-level memory fit, final firmware size
+or hardware correctness is established. Flash, RAM and stack analysis
+remain separate engineering tasks.
+
+References: [GCC ARM options](https://gcc.gnu.org/onlinedocs/gcc/ARM-Options.html),
+[CMake toolchains](https://cmake.org/cmake/help/latest/manual/cmake-toolchains.7.html),
+[CMAKE_TRY_COMPILE_TARGET_TYPE](https://cmake.org/cmake/help/latest/variable/CMAKE_TRY_COMPILE_TARGET_TYPE.html).
+
 ## Engineering audit still required
 
 | Check | Acceptance evidence |
