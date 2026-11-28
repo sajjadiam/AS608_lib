@@ -17,6 +17,7 @@ function(as608_test_options target)
         "${PROJECT_SOURCE_DIR}/src"
         "${PROJECT_SOURCE_DIR}"
     )
+    as608_apply_sanitizers(${target})
 endfunction()
 
 function(as608_add_test name group)

@@ -4,18 +4,32 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   host-tests:
+    name: ${{ matrix.compiler }} / ${{ matrix.config }} / ${{ matrix.sanitizers == 'ON' && 'ASan+UBSan' || 'native' }}
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
         include:
-          - compiler: gcc
-            cxx: g++
-          - compiler: clang
-            cxx: clang++
+          - {compiler: gcc, cxx: g++, config: Debug, sanitizers: 'OFF'}
+          - {compiler: gcc, cxx: g++, config: Release, sanitizers: 'OFF'}
+          - {compiler: clang, cxx: clang++, config: Debug, sanitizers: 'OFF'}
+          - {compiler: clang, cxx: clang++, config: Release, sanitizers: 'OFF'}
+          - {compiler: clang, cxx: clang++, config: Debug, sanitizers: 'ON'}
+    env:
+      ASAN_OPTIONS: detect_leaks=1:halt_on_error=1
+      UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
     steps:
       - uses: actions/checkout@v4
       - name: Configure host tests
@@ -23,13 +37,44 @@ jobs:
           cmake -S . -B build/host
           -DCMAKE_C_COMPILER=${{ matrix.compiler }}
           -DCMAKE_CXX_COMPILER=${{ matrix.cxx }}
-          -DCMAKE_BUILD_TYPE=Debug
+          -DCMAKE_BUILD_TYPE=${{ matrix.config }}
           -DAS608_BUILD_TESTS=ON
-      - name: Build host tests and header contracts
-        run: cmake --build build/host --parallel
+          -DAS608_ENABLE_SANITIZERS=${{ matrix.sanitizers }}
+      - name: Verify CTest inventory
+        run: python3 tests/check_inventory.py build/host
+      - name: Build core, tests and header contracts
+        run: cmake --build build/host --parallel 2
       - name: Run CTest
-        run: ctest --test-dir build/host --output-on-failure
-      - name: Build standalone C library
+        run: >
+          ctest --test-dir build/host --parallel 2
+          --output-on-failure --no-tests=error
+          --output-junit results.xml
+      - name: Upload test report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ctest-${{ matrix.compiler }}-${{ matrix.config }}-${{ matrix.sanitizers }}
+          path: |
+            build/host/results.xml
+            build/host/Testing/Temporary/LastTest.log
+          if-no-files-found: ignore
+          retention-days: 14
+      - name: Verify standalone C-only library
+        if: matrix.config == 'Release' && matrix.sanitizers == 'OFF'
         run: |
           cmake -S . -B build/core -DCMAKE_C_COMPILER=${{ matrix.compiler }} -DCMAKE_BUILD_TYPE=Release -DAS608_BUILD_TESTS=OFF
-          cmake --build build/core --parallel
+          cmake --build build/core --parallel 2
+          test -f build/core/libas608.a
+          test ! -f build/core/CTestTestfile.cmake
+          ! grep -q '^CMAKE_CXX_COMPILER:' build/core/CMakeCache.txt
+
+  static-analysis:
+    name: GCC / static analyzer
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile all production sources with GCC analyzer
+        run: |
+          cmake -S . -B build/analyzer -DCMAKE_C_COMPILER=gcc -DCMAKE_BUILD_TYPE=Debug -DAS608_BUILD_TESTS=OFF "-DCMAKE_C_FLAGS=-Wall -Wextra -Werror -pedantic -fanalyzer"
+          cmake --build build/analyzer --parallel 2

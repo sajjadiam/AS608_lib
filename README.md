@@ -8,7 +8,7 @@ transfer. The unified non-blocking port still needs hardware validation.
 
 ## Completed API rebuild — 46 APIs
 
-Post-rebuild maintenance: stage 57, CMake and repository layout.
+Post-rebuild maintenance: stage 58, CI validation matrix.
 
 The five lifecycle APIs and forty-one command/job APIs covering thirty-one opcodes (BurnCode experimental) (0x13, 0x0F, 0x1D, 0x1F, 0x16, 0x01, 0x02, 0x03, 0x05, 0x04, 0x07, 0x08, 0x09, 0x06, 0x0C, 0x0D, 0x10, 0x11, 0x1B, 0x0A, 0x0B, 0x1C, 0x0E, 0x17, 0x12, 0x14, 0x15, 0x18, 0x19, 0x1E, 0x1A)
 are currently compiled from as608.c. Process supports simple,
@@ -300,6 +300,33 @@ The default native standalone configuration enables tests. Header-only
 contracts compile in C11 and C++11 during the build; public C/C++ linkage
 and all existing runtime tests are registered with CTest. Assertions
 remain enabled in host tests even for Release builds.
+
+### CI validation and sanitizers
+
+The host workflow runs GCC and Clang Debug/Release builds, an additional
+Clang ASan+UBSan build, and a separate GCC static-analyzer C-only build.
+All executable tests are checked against the source inventory before
+running; compile-only header checks are built alongside them. CTest runs
+with two parallel workers and publishes JUnit and failure logs. The two
+native Release jobs also verify a standalone C-only static library.
+No sanitizer instrumentation is enabled for normal embedded builds.
+
+```sh
+cmake -S . -B build/sanitized -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_BUILD_TYPE=Debug -DAS608_BUILD_TESTS=ON -DAS608_ENABLE_SANITIZERS=ON
+cmake --build build/sanitized --parallel 2
+ctest --test-dir build/sanitized --parallel 2 --output-on-failure --no-tests=error
+```
+
+For a local GCC analyzer pass:
+
+```sh
+cmake -S . -B build/analyzer -DCMAKE_C_COMPILER=gcc -DCMAKE_BUILD_TYPE=Debug -DAS608_BUILD_TESTS=OFF '-DCMAKE_C_FLAGS=-Wall -Wextra -Werror -pedantic -fanalyzer'
+cmake --build build/analyzer --parallel 2
+```
+
+Sanitizers and the analyzer detect classes of defects, not all possible
+bugs. They do not establish hardware, timing, stack or firmware correctness.
+
 
 ### Library-only build
 
