@@ -80,6 +80,8 @@ static void test_success(void)
     assert(ctx.transaction.tx_len == 0U);
     assert(ctx.transaction.rx_header_pos == 0U);
     assert(ctx.step == 0U);
+    assert(!ctx.input && !ctx.stream_data && !ctx.stream_length && !ctx.reply_output);
+    assert(!ctx.stream_write && !ctx.stream_read && !ctx.stream_user);
     config.timeout_ms = 1U;
     assert(ctx.transaction.config.timeout_ms == 100U);
     assert_unchanged(&ctx, &config, AS608_STATUS_INVALID_ARG);

@@ -262,12 +262,47 @@ static void test_source_metadata(void) {
     }
 }
 
+/* Exercise the last source fragment near SIZE_MAX with a synthetic prefix. */
+static void test_size_max_boundary(void) {
+    mock_t mock = {0};
+    as608_t ctx = {0};
+    as608_result_t result;
+    const size_t total = SIZE_MAX - (SIZE_MAX % 64U);
+    source_t state = {total, 0U, 0U, 1U, 0};
+    const as608_stream_source_t source = {&state, produce, total};
+    setup(&ctx, &mock);
+    parameters(&mock, AS608_ACK_OK, 1U, 17U);
+    test_append_ack(&mock, AS608_ACK_OK);
+    assert(as608_download_image_start(&ctx, &source) == AS608_STATUS_OK);
+    for (unsigned int poll = 0U; poll < 100U && state.calls == 0U; ++poll) {
+        assert(test_step(&ctx, &mock) == AS608_PENDING);
+    }
+    assert(state.calls == 1U && state.offset == 0U);
+
+    /* The first source poll stalled; simulate the already transmitted prefix. */
+    state.offset = total - 64U;
+    ctx.input_offset = state.offset;
+    const size_t pos = mock.tx_length;
+    uint8_t data[64U];
+    for (size_t i = 0U; i < sizeof(data); ++i) {
+        data[i] = pattern(state.offset + i);
+    }
+    mock.idle = 1;
+    assert(run(&ctx, &mock, false) == AS608_COMPLETE);
+    assert(test_check_frame(&mock, pos, AS608_PACKET_END_DATA, data, sizeof(data)) ==
+           mock.tx_length);
+    assert(as608_get_result(&ctx, &result));
+    assert(result.status == AS608_STATUS_OK && result.confirmation == AS608_ACK_OK);
+    assert(state.offset == total && ctx.input_offset == total && state.calls == 2U);
+}
+
 int main(void) {
     for (uint16_t code = 1U; code <= 3U; ++code) {
         test_success(256U, code);
         test_success(36864U, code);
     }
     test_success(70144U, 1U);
+    test_size_max_boundary();
     test_reply(256U, AS608_ACK_OK, 0U, 17U, AS608_ACK_OK, AS608_STATUS_UNEXPECTED_REPLY, 0U, 12U);
     test_reply(256U, AS608_ACK_OK, 4U, 17U, AS608_ACK_OK, AS608_STATUS_UNEXPECTED_REPLY, 0U, 12U);
     test_reply(192U, AS608_ACK_OK, 2U, 17U, AS608_ACK_OK, AS608_STATUS_UNEXPECTED_REPLY, 0U, 12U);

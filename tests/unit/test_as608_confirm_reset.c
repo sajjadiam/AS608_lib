@@ -48,18 +48,27 @@ static as608_config_t config_for(mock_t *mock) {
     };
 }
 
-/* Internal job fixture until public start APIs are restored. */
-static void arm(as608_t *ctx) {
-    const uint8_t command = 0x01U;
-    const as608_transaction_frame_t frame = {
-        AS608_PACKET_COMMAND, &command, 1U
-    };
+/* A stream callback must never run during logical recovery. */
+static bool unexpected_sink(void *user, const uint8_t *data, size_t length) {
+    (void)user;
+    (void)data;
+    (void)length;
+    assert(0 && "recovery must not call stream sink");
+    return false;
+}
 
-    assert(as608_transaction_send(&ctx->transaction, &frame) == AS608_STATUS_OK);
-    as608_transaction_begin(&ctx->transaction);
-    ctx->step = 1U; /* STEP_SIMPLE_ACK */
-    ctx->state = AS608_STATE_BUSY;
-    ctx->result.status = AS608_STATUS_NOT_INITIALIZED;
+/* A stream callback must never run during logical recovery. */
+static int32_t unexpected_source(void *user, uint8_t *data, size_t length) {
+    (void)user;
+    (void)data;
+    (void)length;
+    assert(0 && "recovery must not call stream source");
+    return -1;
+}
+
+/* Admit a normal job using the public API. */
+static void arm(as608_t *ctx) {
+    assert(as608_capture_image_start(ctx) == AS608_STATUS_OK);
 }
 
 static void assert_unchanged(as608_t *ctx, as608_status_t expected) {
@@ -103,6 +112,7 @@ static void assert_recovered(as608_t *ctx, const as608_config_t *config, mock_t 
     assert(!ctx->input && ctx->input_length == 0U && ctx->input_offset == 0U);
     assert(!ctx->stream_data && ctx->stream_capacity == 0U && ctx->stream_offset == 0U);
     assert(!ctx->stream_length && !ctx->reply_output);
+    assert(!ctx->stream_write && !ctx->stream_read && !ctx->stream_user);
     assert(ctx->transaction.started_ms == 0U);
     assert(ctx->transaction.wire_phase == 0U);
     assert(ctx->transaction.tx_len == 0U && ctx->transaction.tx_pos == 0U);
@@ -145,6 +155,10 @@ static void test_abort_recovery(void) {
     ctx.stream_offset = 1U;
     ctx.stream_length = &length;
     ctx.reply_output = buffer;
+    /* White-box fixture: recovery must clear every borrowed reference. */
+    ctx.stream_write = unexpected_sink;
+    ctx.stream_read = unexpected_source;
+    ctx.stream_user = &mock;
 
     assert(as608_abort(&ctx) == AS608_STATUS_OK);
     assert_recovered(&ctx, &config, &mock);

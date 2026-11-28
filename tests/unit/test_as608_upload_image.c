@@ -257,6 +257,35 @@ static void test_admission(void) {
     }
 }
 
+/* Exercise the final fragment at SIZE_MAX without allocating a huge image. */
+static void test_size_max_boundary(void) {
+    mock_t mock = {0};
+    as608_t ctx = {0};
+    as608_result_t result;
+    sink_t state = {SIZE_MAX, 0U, 0U, 0U};
+    const as608_stream_sink_t sink = {&state, consume, state.length};
+    setup(&ctx, &mock);
+    test_append_ack(&mock, AS608_ACK_OK);
+    append_data(&mock, AS608_PACKET_DATA, 0U, 1U);
+    assert(as608_upload_image_start(&ctx, &sink) == AS608_STATUS_OK);
+
+    for (unsigned int poll = 0U; poll < 100U && state.calls == 0U; ++poll) {
+        assert(test_step(&ctx, &mock) == AS608_PENDING);
+    }
+    assert(state.calls == 1U && state.received == 1U);
+
+    /* Synthetic prefix: preserve the driver's remaining receive limit. */
+    state.received = SIZE_MAX - 64U;
+    ctx.stream_offset = state.received;
+    ctx.transaction.rx_limit = 64U;
+    append_data(&mock, AS608_PACKET_END_DATA, state.received, 64U);
+    assert(run(&ctx, &mock) == AS608_COMPLETE);
+    assert(as608_get_result(&ctx, &result));
+    assert(result.status == AS608_STATUS_OK && result.confirmation == AS608_ACK_OK);
+    assert(state.received == SIZE_MAX && ctx.stream_offset == SIZE_MAX);
+    assert(state.calls == 2U);
+}
+
 int main(void) {
     test_success(1U, 32U);
     test_success(777U, 32U);
@@ -265,6 +294,7 @@ int main(void) {
     test_success(777U, 256U);
     test_success(36864U, 128U);
     test_success(70000U, 32U);
+    test_size_max_boundary();
 
     test_fault(EARLY_END);
     test_fault(MISSING_END);

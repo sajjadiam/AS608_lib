@@ -335,7 +335,9 @@ typedef enum {
 } as608_progress_t;
 
 /** @brief Caller-owned context; fields are private to the driver.
- * @details Zero-initialize a fresh object before init. Do not copy or
+ * @details Initialize a fresh object with a C initializer (e.g., {0})
+ * or static storage initialization before init; do not assume bytewise
+ * zero is a null pointer representation. Do not copy or
  * modify initialized context fields, including while idle or done.
  * All calls on a context are serialized by the application. Internal
  * layout is exposed solely for static allocation, not for direct access.

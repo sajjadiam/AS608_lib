@@ -104,6 +104,17 @@ _Static_assert(STEP_FREE_SLOT_INDEX_ACK <= UINT8_MAX, "Job step must fit uint8_t
  * Shared job lifecycle helpers
  * ========================================================================= */
 
+/* Clear borrowed job pointers using semantic null values, not byte patterns. */
+static void clear_job_references(as608_t *ctx) {
+    ctx->reply_output = NULL;
+    ctx->input = NULL;
+    ctx->stream_data = NULL;
+    ctx->stream_length = NULL;
+    ctx->stream_write = NULL;
+    ctx->stream_read = NULL;
+    ctx->stream_user = NULL;
+}
+
 /* Record a host fault and quarantine the link until external recovery. */
 static as608_progress_t quarantine(as608_t *ctx, as608_status_t status) {
     ctx->result.status = status;
@@ -157,6 +168,7 @@ as608_status_t as608_init(as608_t *ctx, const as608_config_t *config) {
     /* Preserve configuration even if it aliases ctx->transaction.config. */
     const as608_config_t saved = *config;
     (void)memset(ctx, 0, sizeof(*ctx));
+    clear_job_references(ctx);
     as608_transaction_init(&ctx->transaction, &saved);
     ctx->state = AS608_STATE_IDLE;
 
@@ -229,6 +241,7 @@ as608_status_t as608_confirm_reset(as608_t *ctx) {
 
     const as608_config_t config = ctx->transaction.config;
     (void)memset(ctx, 0, sizeof(*ctx));
+    clear_job_references(ctx);
     as608_transaction_init(&ctx->transaction, &config);
     ctx->state = AS608_STATE_IDLE;
 
@@ -301,13 +314,7 @@ static as608_status_t launch_payload(as608_t *ctx, const uint8_t *bytes, size_t 
     }
 
     ctx->result = (as608_result_t){AS608_STATUS_NOT_INITIALIZED, 0U};
-    ctx->reply_output = NULL;
-    ctx->input = NULL;
-    ctx->stream_data = NULL;
-    ctx->stream_length = NULL;
-    ctx->stream_write = NULL;
-    ctx->stream_read = NULL;
-    ctx->stream_user = NULL;
+    clear_job_references(ctx);
     as608_transaction_begin(&ctx->transaction);
     ctx->state = AS608_STATE_BUSY;
 

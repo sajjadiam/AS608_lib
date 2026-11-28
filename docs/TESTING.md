@@ -156,6 +156,62 @@ can change these numbers. No stack limit is imposed without an
 application requirement. See [GCC developer options](https://gcc.gnu.org/onlinedocs/gcc/Developer-Options.html)
 and [GCC instrumentation/options](https://gcc.gnu.org/onlinedocs/gcc/Instrumentation-Options.html).
 
+### Measured stack baseline
+
+[ARM CI 46124254928](https://github.com/sajjadiam/AS608_lib/actions/runs/46124254928)
+passed at commit 905bd9e. GCC 13.2.1, -Os, reported a static frame of
+80 bytes for as608_process, 296 for poll_download_source and 32 for
+as608_transaction_send. The largest known public direct path is
+408 bytes through these three functions. The largest reported start
+path is 136 bytes. Unresolved process-path callees include indirect
+callbacks, memcpy and memset. This is not a complete worst-case bound.
+The memory baseline remained unchanged in that build.
+
+## C11 safety review
+
+Stage 64 reviewed the three production translation units against C11
+(N1570 §§6.2.4, 6.2.6.2, 6.3.2.3, 6.5.6, 6.5.7, 6.7.9 and 7.24).
+The reviewed invariants are:
+
+| Area | Reasoning / evidence |
+| --- | --- |
+| Packet lengths | L >= 2 before subtraction; codec max N=65533; transaction N<=256 before adding overhead or copying. |
+| Big-endian shifts | uint32_t casts precede 24/16/8-bit shifts; 16-bit shift input is at most 255; packet-size code <=3 before shift. |
+| Checksum | Unsigned accumulation/truncation preserves modulo 65536, including accumulator wrap. |
+| Transport counts | Validate signed callback return and full-width count before converting to size_t; bound counters before subtraction and pointer arithmetic. |
+| Stream arithmetic | Require offset < capacity and length <= capacity-offset before addition; source uses nonzero validated chunk size. |
+| Search ranges | Widen uint16_t endpoints to uint32_t; exclusive upper bound 65536 is representable. |
+| Index table | Limit capacity to 1024, page to aligned in-range base, bitmap offset to 0..255, bit shift to 0..7. |
+| Time | Unsigned uint32_t subtraction handles natural wrap; scheduler must observe deadline before a full wrap. |
+| ACK | Verify kind and nonempty permitted length before reading confirmation; full success shape before typed loads. |
+| Pointer lifetime | Copy command payloads and descriptors as contracted; immutable/nonoverlapping caller storage and synchronous borrowed callback buffers required. |
+
+Portability correction: initialize every command-layer borrowed object
+and function pointer with semantic NULL assignments after bytewise
+context clearing, and reuse the same helper at job admission. C11 does
+not require all-bits-zero to represent null pointers. Transport
+initialization overwrites its entire pointer-bearing configuration with
+a saved valid descriptor before use. Fresh application objects should
+use C initialization, not assume raw byte-zero is portable. This does
+not establish secure erasure.
+
+Added init/recovery pointer checks and synthetic near-SIZE_MAX final
+image upload/download fragment regressions. These exercise arithmetic
+at the host size_t boundary without allocating a huge image; they are
+not actual multi-gigabyte sensor transfers.
+
+The measured ARM ABI uses one-byte enums. Caller-side conversions can
+truncate invalid wider integers before API entry; validate external
+integers before conversion and compile all consumers with compatible ABI
+options. Do not change enum width as a memory optimization. No C API
+can establish actual validity, lifetime or extent of arbitrary non-null
+caller pointers. Data races, incorrect callbacks and hardware ownership
+violations remain outside core guarantees.
+
+Reference: [WG14 N1570 C11 draft](https://www.open-std.org/jtc1/sc22/wg14/www/docs/n1570.pdf).
+This is a targeted review and regression extension, not a formal proof,
+MISRA certification or exhaustive validation on all C implementations.
+
 ## Engineering audit still required
 
 | Check | Acceptance evidence |

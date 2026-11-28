@@ -221,7 +221,9 @@ run does not establish target compatibility, timing or memory bounds.
 
 - [x] [ARM Cortex-M3 cross build, five header checks and full-core link](https://github.com/sajjadiam/AS608_lib/actions/runs/46123757921).
 - [x] Reference Cortex-M3 memory baseline measured and reviewed: see [ARM memory reports](docs/TESTING.md#arm-memory-reports).
-- [ ] Measure stack, final firmware memory fit and service latency.
+- [x] [Reference GCC stack frames and known direct-call paths](https://github.com/sajjadiam/AS608_lib/actions/runs/46124254928) measured (408-byte largest known internal path).
+- [ ] Validate final firmware stack, memory fit and service latency.
+- [ ] Confirm stage-64 C11 portability correction and boundary regression CI; see [safety review](docs/TESTING.md#c11-safety-review).
 - [ ] STM32F103 UART IT/DMA adapter: owned TX queue, RX ring, error propagation and synchronization.
 - [ ] Non-blocking physical recovery and current-core target integration.
 - [ ] Verify no-final-ACK DownChar/DownImage profile before transfers or composite writes.
