@@ -8,7 +8,7 @@ transfer. The unified non-blocking port still needs hardware validation.
 
 ## Completed API rebuild — 46 APIs
 
-Post-rebuild maintenance: stage 56, shared host-test fixtures.
+Post-rebuild maintenance: stage 57, CMake and repository layout.
 
 The five lifecycle APIs and forty-one command/job APIs covering thirty-one opcodes (BurnCode experimental) (0x13, 0x0F, 0x1D, 0x1F, 0x16, 0x01, 0x02, 0x03, 0x05, 0x04, 0x07, 0x08, 0x09, 0x06, 0x0C, 0x0D, 0x10, 0x11, 0x1B, 0x0A, 0x0B, 0x1C, 0x0E, 0x17, 0x12, 0x14, 0x15, 0x18, 0x19, 0x1E, 0x1A)
 are currently compiled from as608.c. Process supports simple,
@@ -85,7 +85,9 @@ one-byte UART fixtures in tests/common/mock_uart.h, with original local
 buffer capacities and drain profiles. Identical independent frame helpers
 are in mock_wire.h; specialized lifecycle, packet, transaction and partial-I/O
 regressions retain their fixtures. Test cases and production sources are unchanged.
-The root test paths remain until the build-system migration.
+All production files now live together in src/. Host tests live in tests/unit,
+tests/integration and tests/common. CMake/CTest replaces the former manual
+host build commands; the core-only build does not require C++.
 
 All 23 baseline APIs and APIs 24–46 are now implemented (BurnCode experimental). CI builds independent packet and
 transaction tests, API 01–46 dedicated tests, and full command/async/fault
@@ -131,71 +133,29 @@ manual. Only selectors 0/1 and echoed states 0/1 are supported. Verify
 firmware and physical pin mapping before use; an echo is not a pin
 voltage measurement. No automatic probing or retry.
 
-## Flat project structure
+## Project structure
 
 ```text
 AS608_lib/
-├── as608.h                       Public command API, types and context
-├── as608.c                       Command FSM and public job lifecycle
-├── as608_transaction.h/.c         Internal non-blocking packet transport
-├── as608_port.h                  Non-blocking UART port contract
-├── as608_types.h                 Shared status and transport constants
-├── as608_packet.h/.c              Internal packet codec and checksum
-├── test_as608_init.c             Active API 01 initialization tests
-├── test_as608_process.c          Active API 02 progression tests
-├── test_as608_get_result.c       Active API 03 result tests
-├── test_as608_abort.c            Active API 04 abort tests
-├── test_as608_confirm_reset.c    Active API 05 recovery tests
-├── test_as608_verify_password.c  Active API 06 password tests
-├── test_as608_read_parameters.c  Active API 07 parameter tests
-├── test_as608_get_template_count.c Active API 08 count tests
-├── test_as608_read_index_table.c Active API 09 bitmap tests
-├── test_as608_read_information_page.c Active API 10 stream tests
-├── test_as608_capture_image.c    Active API 11 capture tests
-├── test_as608_generate_character.c Active API 12 feature tests
-├── test_as608_match_buffers.c    Active API 13 comparison tests
-├── test_as608_create_model.c     Active API 14 model creation tests
-├── test_as608_search.c           Active API 15 search tests
-├── test_as608_load_template.c    Active API 16 template load tests
-├── test_as608_upload_template.c  Active API 17 template upload tests
-├── test_as608_download_template.c Active API 18 template download tests
-├── test_as608_store_template.c   Active API 19 flash store tests
-├── test_as608_read_template.c    Active API 20 composite read tests
-├── test_as608_write_template.c   Active API 21 composite write tests
-├── test_as608_delete_templates.c Active API 22 range deletion tests
-├── test_as608_empty_database.c  Active API 23 database clear tests
-├── test_as608_enroll.c          Active API 24 automatic enrollment tests
-├── test_as608_identify.c        Active API 25 automatic identification tests
-├── test_as608_high_speed_search.c Active API 26 high-speed search tests
-├── test_as608_upload_feature.c  Active API 27 feature upload tests
-├── test_as608_download_feature.c Active API 28 feature download tests
-├── test_as608_upload_image.c    Active API 29 image upload tests
-├── test_as608_download_image.c  Active API 30 image download tests
-├── test_as608_generate_binary_image.c Active API 31 image processing tests
-├── test_as608_set_baud_rate.c    Active API 32 baud register tests
-├── test_as608_set_security_level.c Active API 33 security register tests
-├── test_as608_set_packet_size.c  Active API 34 packet-size register tests
-├── test_as608_control_other_port.c Active API 35 port-control tests
-├── test_as608_read_device_info.c Active API 36 descriptor stream tests
-├── test_as608_set_password.c    Active API 37 password-change tests
-├── test_as608_get_random_code.c Active API 38 random-code tests
-├── test_as608_set_device_address.c Active API 39 provisioning tests
-├── test_as608_write_notepad.c   Active API 40 notepad write tests
-├── test_as608_read_notepad.c    Active API 41 notepad read tests
-├── test_as608_write_user_gpio.c Active API 42 GPIO echo tests
-├── test_as608_burn_code.c       Active API 43 experimental burn tests
-├── test_as608_enroll_two_scan.c Active API 44 enrollment FSM tests
-├── test_as608_identify_range.c  Active API 45 identification FSM tests
-├── test_as608_find_free_slot.c  Active API 46 free-slot bitmap tests
-├── test_as608_transaction.c      Independent transport tests
-├── test_as608_packet.c           Packet tests
-├── test_as608_commands.c         Full command and template regression tests
-├── test_as608_async.c            Cooperative scheduling tests
-├── test_as608_async_faults.c      Partial I/O and fault tests
-├── FEATURES.md                   Command inventory and implementation roadmap
+├── src/
+│   ├── as608.c
+│   ├── as608.h
+│   ├── as608_types.h
+│   ├── as608_port.h
+│   ├── as608_packet.c
+│   ├── as608_packet.h
+│   ├── as608_transaction.c
+│   └── as608_transaction.h
+├── tests/
+│   ├── unit/          # API-specific, codec, transport and header contracts
+│   ├── integration/   # commands, async and async fault regressions
+│   ├── common/        # Mock UART and independent wire fixtures
+│   └── CMakeLists.txt
+├── docs/
+├── .github/workflows/c11-host-tests.yml
+├── CMakeLists.txt
 ├── README.md
-├── docs/adr/0001-as608-driver-architecture.md
-└── .github/workflows/c11-host-tests.yml
+└── FEATURES.md
 ```
 
 ## Architecture and dependency graph
@@ -325,69 +285,46 @@ Template interoperability across firmware variants is not guaranteed.
 
 ## Build and test
 
-Add `as608.c`, `as608_transaction.c` and `as608_packet.c` to the Keil project and include the root.
-Do not link host test files (each contains a main). Supply the platform port;
-STM32 HAL IT/DMA integration is not yet provided.
+Requires CMake 3.20 or later and an ISO C11 compiler. Native host tests
+also need a C++11 compiler (GCC/G++ or Clang/Clang++).
 
 ```sh
-mkdir -p build
-cc -std=c11 -Wall -Wextra -Werror -pedantic -I. as608_packet.c test_as608_packet.c -o build/test_packet
-./build/test_packet
-cc -std=c11 -Wall -Wextra -Werror -pedantic -I. as608_packet.c as608_transaction.c test_as608_transaction.c -o build/test_transaction
-./build/test_transaction
-cc -std=c11 -Wall -Wextra -Werror -pedantic -I. as608_packet.c as608_transaction.c as608.c test_as608_init.c -o build/test_init
-./build/test_init
-cc -std=c11 -Wall -Wextra -Werror -pedantic -I. as608_packet.c as608_transaction.c as608.c test_as608_process.c -o build/test_process
-./build/test_process
-cc -std=c11 -Wall -Wextra -Werror -pedantic -I. as608_packet.c as608_transaction.c as608.c test_as608_get_result.c -o build/test_get_result
-./build/test_get_result
-cc -std=c11 -Wall -Wextra -Werror -pedantic -I. as608_packet.c as608_transaction.c as608.c test_as608_abort.c -o build/test_abort
-./build/test_abort
-cc -std=c11 -Wall -Wextra -Werror -pedantic -I. as608_packet.c as608_transaction.c as608.c test_as608_confirm_reset.c -o build/test_confirm_reset
-./build/test_confirm_reset
-cc -std=c11 -Wall -Wextra -Werror -pedantic -I. as608_packet.c as608_transaction.c as608.c test_as608_verify_password.c -o build/test_verify_password
-./build/test_verify_password
-cc -std=c11 -Wall -Wextra -Werror -pedantic -I. as608_packet.c as608_transaction.c as608.c test_as608_read_parameters.c -o build/test_read_parameters
-./build/test_read_parameters
-cc -std=c11 -Wall -Wextra -Werror -pedantic -I. as608_packet.c as608_transaction.c as608.c test_as608_get_template_count.c -o build/test_get_template_count
-./build/test_get_template_count
-cc -std=c11 -Wall -Wextra -Werror -pedantic -I. as608_packet.c as608_transaction.c as608.c test_as608_read_index_table.c -o build/test_read_index_table
-./build/test_read_index_table
-cc -std=c11 -Wall -Wextra -Werror -pedantic -I. as608_packet.c as608_transaction.c as608.c test_as608_read_information_page.c -o build/test_read_information_page
-./build/test_read_information_page
-cc -std=c11 -Wall -Wextra -Werror -pedantic -I. as608_packet.c as608_transaction.c as608.c test_as608_capture_image.c -o build/test_capture_image
-./build/test_capture_image
-cc -std=c11 -Wall -Wextra -Werror -pedantic -I. as608_packet.c as608_transaction.c as608.c test_as608_generate_character.c -o build/test_generate_character
-./build/test_generate_character
-cc -std=c11 -Wall -Wextra -Werror -pedantic -I. as608_packet.c as608_transaction.c as608.c test_as608_match_buffers.c -o build/test_match_buffers
-./build/test_match_buffers
-cc -std=c11 -Wall -Wextra -Werror -pedantic -I. as608_packet.c as608_transaction.c as608.c test_as608_create_model.c -o build/test_create_model
-./build/test_create_model
-cc -std=c11 -Wall -Wextra -Werror -pedantic -I. as608_packet.c as608_transaction.c as608.c test_as608_search.c -o build/test_search
-./build/test_search
-cc -std=c11 -Wall -Wextra -Werror -pedantic -I. as608_packet.c as608_transaction.c as608.c test_as608_load_template.c -o build/test_load_template
-./build/test_load_template
-cc -std=c11 -Wall -Wextra -Werror -pedantic -I. as608_packet.c as608_transaction.c as608.c test_as608_upload_template.c -o build/test_upload_template
-./build/test_upload_template
-cc -std=c11 -Wall -Wextra -Werror -pedantic -I. as608_packet.c as608_transaction.c as608.c test_as608_download_template.c -o build/test_download_template
-./build/test_download_template
-cc -std=c11 -Wall -Wextra -Werror -pedantic -I. as608_packet.c as608_transaction.c as608.c test_as608_store_template.c -o build/test_store_template
-./build/test_store_template
-cc -std=c11 -Wall -Wextra -Werror -pedantic -I. as608_packet.c as608_transaction.c as608.c test_as608_read_template.c -o build/test_read_template
-./build/test_read_template
-cc -std=c11 -Wall -Wextra -Werror -pedantic -I. as608_packet.c as608_transaction.c as608.c test_as608_write_template.c -o build/test_write_template
-./build/test_write_template
-cc -std=c11 -Wall -Wextra -Werror -pedantic -I. as608_packet.c as608_transaction.c as608.c test_as608_delete_templates.c -o build/test_delete_templates
-./build/test_delete_templates
-cc -std=c11 -Wall -Wextra -Werror -pedantic -I. as608_packet.c as608_transaction.c as608.c test_as608_empty_database.c -o build/test_empty_database
-./build/test_empty_database
-cc -std=c11 -Wall -Wextra -Werror -pedantic -I. as608_packet.c as608_transaction.c as608.c test_as608_commands.c -o build/test_commands
-./build/test_commands
-cc -std=c11 -Wall -Wextra -Werror -pedantic -I. as608_packet.c as608_transaction.c as608.c test_as608_async.c -o build/test_async
-./build/test_async
-cc -std=c11 -Wall -Wextra -Werror -pedantic -I. as608_packet.c as608_transaction.c as608.c test_as608_async_faults.c -o build/test_async_faults
-./build/test_async_faults
+cmake -S . -B build/host -DAS608_BUILD_TESTS=ON -DCMAKE_BUILD_TYPE=Debug
+cmake --build build/host --parallel
+ctest --test-dir build/host --output-on-failure
+ctest --test-dir build/host -L unit
+ctest --test-dir build/host -L integration
 ```
+
+The default native standalone configuration enables tests. Header-only
+contracts compile in C11 and C++11 during the build; public C/C++ linkage
+and all existing runtime tests are registered with CTest. Assertions
+remain enabled in host tests even for Release builds.
+
+### Library-only build
+
+```sh
+cmake -S . -B build/core -DAS608_BUILD_TESTS=OFF -DCMAKE_BUILD_TYPE=Release
+cmake --build build/core --parallel
+```
+
+For cross compilation, provide the application's CMake toolchain file
+using `-DCMAKE_TOOLCHAIN_FILE=/path/to/toolchain.cmake`. Tests default
+to OFF in cross builds and when consumed as a subdirectory. No target
+startup code, linker script or MCU compiler flags are provided here.
+
+### Integration into an application
+
+```cmake
+add_subdirectory(path/to/AS608_lib)
+target_link_libraries(my_firmware PRIVATE as608::as608)
+```
+
+For Keil or STM32CubeIDE without CMake, compile only
+`src/as608.c`, `src/as608_transaction.c`, and `src/as608_packet.c`
+and add `src/` to the compiler include path. Application includes remain
+`#include "as608.h"`. Do not compile host test sources into firmware.
+Supply the platform port; STM32 HAL IT/DMA integration is not yet provided.
 
 ## Full command API design
 

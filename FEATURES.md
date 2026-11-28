@@ -2,13 +2,13 @@
 
 Baseline: [Core e9218ec](https://github.com/sajjadiam/AS608_lib/commit/e9218ecd362b254b4e8d1de9e199825fbf42a173) — 2026-11-25.
 
-This checklist tracks the host library against the Synochip AS60x Communication Manual V1.0 (April 2010), checked against the current [public API](as608.h) and [implementation](as608.c).
+This checklist tracks the host library against the Synochip AS60x Communication Manual V1.0 (April 2010), checked against the current [public API](src/as608.h) and [implementation](src/as608.c).
 
 - Checked: implemented in the non-blocking core, within the stated scope.
 - Unchecked: missing, incomplete, or awaiting the indicated validation.
 - Command coverage: **31/31 opcode implementations** (30 general command implementations + one explicitly authorized experimental BurnCode profile). Target burn procedure is unverified. UpChar and DownChar are implemented with limited file-size support.
 - Implementation is not equivalent to hardware validation or universal firmware compatibility.
-- API design: all 31 documented opcodes have contracts in [as608.h](as608.h). All wire opcodes now have host implementations; BurnCode remains experimental and requires target verification. All 46 planned APIs are implemented and exposed without a feature macro; target validation remains separate.
+- API design: all 31 documented opcodes have contracts in [as608.h](src/as608.h). All wire opcodes now have host implementations; BurnCode remains experimental and requires target verification. All 46 planned APIs are implemented and exposed without a feature macro; target validation remains separate.
 
 ## Active rebuild status (current source)
 
@@ -219,7 +219,7 @@ All three planned composite APIs are implemented; verify bitmap bit ordering, ca
 
 1. Synochip, *AS60x fingerprint recognition SOC Communication Manual V1.0* (AS60x 指纹识别 SOC 通讯手册), April 2010. Printed pp. 2–7 (configuration, buffers), pp. 8–10 (31 commands), pp. 11–28 (wire protocol and commands), pp. 29–34 (workflows).
 2. Synochip, *AS608 Processor Datasheet*, v1.00, September 2015, sections 4 and 7. Processor peripherals are not necessarily accessible through module UART commands.
-3. Repository: [as608.h](as608.h), [as608.c](as608.c), [as608_transaction.c](as608_transaction.c), [as608_port.h](as608_port.h).
+3. Repository: [as608.h](src/as608.h), [as608.c](src/as608.c), [as608_transaction.c](src/as608_transaction.c), [as608_port.h](src/as608_port.h).
 
 Manual caveats: several entries are reserved or legacy PS1802-specific. Notepad total sizes conflict in the prose (16 × 32-byte page layout gives 512 bytes); ReadSysPara contains a conflicting packet-size code 1 value (WriteReg specifies 64 bytes). Verify these on target. No claim is made that every AS608 module implements every AS60x command.
 
@@ -236,3 +236,4 @@ Manual caveats: several entries are reserved or legacy PS1802-specific. Notepad 
 - [x] Stage 54: public-header contract review; grouped types, stable lifecycle/progress values, clarified result and stream ownership semantics, all 46 signature checks and C11/C++11 linkage tests. No changes to source, public signatures or context layout. Runtime command hardening follows in stage 55.
 - [x] Stage 55: command-layer review; common ACK shape validation, generic stream setup, exact chunk-size guards, full-width source result check, stale pointer clearing on admission, named layout constants and simplified dispatcher. Public signatures, context layout and wire profiles unchanged; extended regression tests. Target and performance validation pending.
 - [x] Stage 56: shared UART and independent wire helpers for 41 dedicated command/job tests; preserve buffer capacities, callback profiles and existing test cases. Specialized fault fixtures retained. No production code changes.
+- [x] Stage 57: combined source/header layout in src/, unit/integration test directories, CMake 3.20 static library and CTest inventory, independent lower-layer linkage and C/C++ header checks; native test and core-only builds. No production source changes.

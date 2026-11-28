@@ -25,6 +25,15 @@ The codec and transaction tests link independently of the command layer.
 Storage is visible in headers for static allocation, not for application
 mutation. The public command function signatures remain unchanged.
 
+## Build layout
+
+All eight production source/header files reside in src/. CMake exposes
+as608::as608 as one static library. Packet and transaction object targets
+are independently linkable in host tests. tests/unit contains dedicated
+API and lower-layer contracts; tests/integration contains cross-API and
+cooperative fault regressions; tests/common contains test-only fixtures.
+Cross builds default to library-only and require an application toolchain.
+
 ## Protocol and safety
 
 Use existing AS60x command/ACK formats, big-endian wire fields, 0xEF01 start

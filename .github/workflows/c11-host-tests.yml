@@ -11,129 +11,25 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        compiler: [gcc, clang]
+        include:
+          - compiler: gcc
+            cxx: g++
+          - compiler: clang
+            cxx: clang++
     steps:
       - uses: actions/checkout@v4
-      - name: Build and run active API and lower-layer tests
+      - name: Configure host tests
+        run: >
+          cmake -S . -B build/host
+          -DCMAKE_C_COMPILER=${{ matrix.compiler }}
+          -DCMAKE_CXX_COMPILER=${{ matrix.cxx }}
+          -DCMAKE_BUILD_TYPE=Debug
+          -DAS608_BUILD_TESTS=ON
+      - name: Build host tests and header contracts
+        run: cmake --build build/host --parallel
+      - name: Run CTest
+        run: ctest --test-dir build/host --output-on-failure
+      - name: Build standalone C library
         run: |
-          set -eu
-          mkdir -p build
-          ${{ matrix.compiler }} -std=c11 -Wall -Wextra -Werror -pedantic -ffreestanding -I. -fsyntax-only test_as608_types.c
-          ${{ matrix.compiler }} -x c++ -std=c++11 -Wall -Wextra -Werror -pedantic -I. -fsyntax-only test_as608_types.c
-          ${{ matrix.compiler }} -std=c11 -Wall -Wextra -Werror -pedantic -ffreestanding -I. -fsyntax-only test_as608_packet_header.c
-          ${{ matrix.compiler }} -x c++ -std=c++11 -Wall -Wextra -Werror -pedantic -I. -fsyntax-only test_as608_packet_header.c
-          ${{ matrix.compiler }} -std=c11 -Wall -Wextra -Werror -pedantic -ffreestanding -I. -fsyntax-only test_as608_port_header.c
-          ${{ matrix.compiler }} -x c++ -std=c++11 -Wall -Wextra -Werror -pedantic -I. -fsyntax-only test_as608_port_header.c
-          ${{ matrix.compiler }} -std=c11 -Wall -Wextra -Werror -pedantic -ffreestanding -I. -fsyntax-only test_as608_transaction_header.c
-          ${{ matrix.compiler }} -x c++ -std=c++11 -Wall -Wextra -Werror -pedantic -I. -fsyntax-only test_as608_transaction_header.c
-          ${{ matrix.compiler }} -std=c11 -Wall -Wextra -Werror -pedantic -ffreestanding -I. -fsyntax-only test_as608_header.c
-          for source in as608_packet as608_transaction as608; do
-            ${{ matrix.compiler }} -std=c11 -Wall -Wextra -Werror -pedantic -I. -c "$source.c" -o "build/$source.o"
-          done
-          ${{ matrix.compiler }} -std=c11 -Wall -Wextra -Werror -pedantic -I. test_as608_header.c build/as608_packet.o build/as608_transaction.o build/as608.o -o build/test_public_c
-          ./build/test_public_c
-          ${{ matrix.compiler }} -x c++ -std=c++11 -Wall -Wextra -Werror -pedantic -I. -c test_as608_header.c -o build/test_public_cpp.o
-          ${{ matrix.compiler }} build/test_public_cpp.o build/as608_packet.o build/as608_transaction.o build/as608.o -o build/test_public_cpp
-          ./build/test_public_cpp
-          ${{ matrix.compiler }} -std=c11 -Wall -Wextra -Werror -pedantic -I. as608_packet.c as608_transaction.c test_as608_transaction.c -o build/test_transaction
-          ./build/test_transaction
-          ${{ matrix.compiler }} -std=c11 -Wall -Wextra -Werror -pedantic -I. as608_packet.c test_as608_packet.c -o build/test_packet
-          ./build/test_packet
-          ${{ matrix.compiler }} -std=c11 -Wall -Wextra -Werror -pedantic -I. as608_packet.c as608_transaction.c as608.c test_as608_init.c -o build/test_init
-          ./build/test_init
-          ${{ matrix.compiler }} -std=c11 -Wall -Wextra -Werror -pedantic -I. as608_packet.c as608_transaction.c as608.c test_as608_process.c -o build/test_process
-          ./build/test_process
-          ${{ matrix.compiler }} -std=c11 -Wall -Wextra -Werror -pedantic -I. as608_packet.c as608_transaction.c as608.c test_as608_get_result.c -o build/test_get_result
-          ./build/test_get_result
-          ${{ matrix.compiler }} -std=c11 -Wall -Wextra -Werror -pedantic -I. as608_packet.c as608_transaction.c as608.c test_as608_abort.c -o build/test_abort
-          ./build/test_abort
-          ${{ matrix.compiler }} -std=c11 -Wall -Wextra -Werror -pedantic -I. as608_packet.c as608_transaction.c as608.c test_as608_confirm_reset.c -o build/test_confirm_reset
-          ./build/test_confirm_reset
-          ${{ matrix.compiler }} -std=c11 -Wall -Wextra -Werror -pedantic -I. as608_packet.c as608_transaction.c as608.c test_as608_verify_password.c -o build/test_verify_password
-          ./build/test_verify_password
-          ${{ matrix.compiler }} -std=c11 -Wall -Wextra -Werror -pedantic -I. as608_packet.c as608_transaction.c as608.c test_as608_read_parameters.c -o build/test_read_parameters
-          ./build/test_read_parameters
-          ${{ matrix.compiler }} -std=c11 -Wall -Wextra -Werror -pedantic -I. as608_packet.c as608_transaction.c as608.c test_as608_get_template_count.c -o build/test_get_template_count
-          ./build/test_get_template_count
-          ${{ matrix.compiler }} -std=c11 -Wall -Wextra -Werror -pedantic -I. as608_packet.c as608_transaction.c as608.c test_as608_read_index_table.c -o build/test_read_index_table
-          ./build/test_read_index_table
-          ${{ matrix.compiler }} -std=c11 -Wall -Wextra -Werror -pedantic -I. as608_packet.c as608_transaction.c as608.c test_as608_read_information_page.c -o build/test_read_information_page
-          ./build/test_read_information_page
-          ${{ matrix.compiler }} -std=c11 -Wall -Wextra -Werror -pedantic -I. as608_packet.c as608_transaction.c as608.c test_as608_capture_image.c -o build/test_capture_image
-          ./build/test_capture_image
-          ${{ matrix.compiler }} -std=c11 -Wall -Wextra -Werror -pedantic -I. as608_packet.c as608_transaction.c as608.c test_as608_generate_character.c -o build/test_generate_character
-          ./build/test_generate_character
-          ${{ matrix.compiler }} -std=c11 -Wall -Wextra -Werror -pedantic -I. as608_packet.c as608_transaction.c as608.c test_as608_match_buffers.c -o build/test_match_buffers
-          ./build/test_match_buffers
-          ${{ matrix.compiler }} -std=c11 -Wall -Wextra -Werror -pedantic -I. as608_packet.c as608_transaction.c as608.c test_as608_create_model.c -o build/test_create_model
-          ./build/test_create_model
-          ${{ matrix.compiler }} -std=c11 -Wall -Wextra -Werror -pedantic -I. as608_packet.c as608_transaction.c as608.c test_as608_search.c -o build/test_search
-          ./build/test_search
-          ${{ matrix.compiler }} -std=c11 -Wall -Wextra -Werror -pedantic -I. as608_packet.c as608_transaction.c as608.c test_as608_load_template.c -o build/test_load_template
-          ./build/test_load_template
-          ${{ matrix.compiler }} -std=c11 -Wall -Wextra -Werror -pedantic -I. as608_packet.c as608_transaction.c as608.c test_as608_upload_template.c -o build/test_upload_template
-          ./build/test_upload_template
-          ${{ matrix.compiler }} -std=c11 -Wall -Wextra -Werror -pedantic -I. as608_packet.c as608_transaction.c as608.c test_as608_download_template.c -o build/test_download_template
-          ./build/test_download_template
-          ${{ matrix.compiler }} -std=c11 -Wall -Wextra -Werror -pedantic -I. as608_packet.c as608_transaction.c as608.c test_as608_store_template.c -o build/test_store_template
-          ./build/test_store_template
-          ${{ matrix.compiler }} -std=c11 -Wall -Wextra -Werror -pedantic -I. as608_packet.c as608_transaction.c as608.c test_as608_read_template.c -o build/test_read_template
-          ./build/test_read_template
-          ${{ matrix.compiler }} -std=c11 -Wall -Wextra -Werror -pedantic -I. as608_packet.c as608_transaction.c as608.c test_as608_write_template.c -o build/test_write_template
-          ./build/test_write_template
-          ${{ matrix.compiler }} -std=c11 -Wall -Wextra -Werror -pedantic -I. as608_packet.c as608_transaction.c as608.c test_as608_delete_templates.c -o build/test_delete_templates
-          ./build/test_delete_templates
-          ${{ matrix.compiler }} -std=c11 -Wall -Wextra -Werror -pedantic -I. as608_packet.c as608_transaction.c as608.c test_as608_empty_database.c -o build/test_empty_database
-          ./build/test_empty_database
-          ${{ matrix.compiler }} -std=c11 -Wall -Wextra -Werror -pedantic -I. as608_packet.c as608_transaction.c as608.c test_as608_enroll.c -o build/test_enroll
-          ./build/test_enroll
-          ${{ matrix.compiler }} -std=c11 -Wall -Wextra -Werror -pedantic -I. as608_packet.c as608_transaction.c as608.c test_as608_identify.c -o build/test_identify
-          ./build/test_identify
-          ${{ matrix.compiler }} -std=c11 -Wall -Wextra -Werror -pedantic -I. as608_packet.c as608_transaction.c as608.c test_as608_high_speed_search.c -o build/test_high_speed_search
-          ./build/test_high_speed_search
-          ${{ matrix.compiler }} -std=c11 -Wall -Wextra -Werror -pedantic -I. as608_packet.c as608_transaction.c as608.c test_as608_upload_feature.c -o build/test_upload_feature
-          ./build/test_upload_feature
-          ${{ matrix.compiler }} -std=c11 -Wall -Wextra -Werror -pedantic -I. as608_packet.c as608_transaction.c as608.c test_as608_download_feature.c -o build/test_download_feature
-          ./build/test_download_feature
-          ${{ matrix.compiler }} -std=c11 -Wall -Wextra -Werror -pedantic -I. as608_packet.c as608_transaction.c as608.c test_as608_upload_image.c -o build/test_upload_image
-          ./build/test_upload_image
-          ${{ matrix.compiler }} -std=c11 -Wall -Wextra -Werror -pedantic -I. as608_packet.c as608_transaction.c as608.c test_as608_download_image.c -o build/test_download_image
-          ./build/test_download_image
-          ${{ matrix.compiler }} -std=c11 -Wall -Wextra -Werror -pedantic -I. as608_packet.c as608_transaction.c as608.c test_as608_generate_binary_image.c -o build/test_generate_binary_image
-          ./build/test_generate_binary_image
-          ${{ matrix.compiler }} -std=c11 -Wall -Wextra -Werror -pedantic -I. as608_packet.c as608_transaction.c as608.c test_as608_set_baud_rate.c -o build/test_set_baud_rate
-          ./build/test_set_baud_rate
-          ${{ matrix.compiler }} -std=c11 -Wall -Wextra -Werror -pedantic -I. as608_packet.c as608_transaction.c as608.c test_as608_set_security_level.c -o build/test_set_security_level
-          ./build/test_set_security_level
-          ${{ matrix.compiler }} -std=c11 -Wall -Wextra -Werror -pedantic -I. as608_packet.c as608_transaction.c as608.c test_as608_set_packet_size.c -o build/test_set_packet_size
-          ./build/test_set_packet_size
-          ${{ matrix.compiler }} -std=c11 -Wall -Wextra -Werror -pedantic -I. as608_packet.c as608_transaction.c as608.c test_as608_control_other_port.c -o build/test_control_other_port
-          ./build/test_control_other_port
-          ${{ matrix.compiler }} -std=c11 -Wall -Wextra -Werror -pedantic -I. as608_packet.c as608_transaction.c as608.c test_as608_read_device_info.c -o build/test_read_device_info
-          ./build/test_read_device_info
-          ${{ matrix.compiler }} -std=c11 -Wall -Wextra -Werror -pedantic -I. as608_packet.c as608_transaction.c as608.c test_as608_set_password.c -o build/test_set_password
-          ./build/test_set_password
-          ${{ matrix.compiler }} -std=c11 -Wall -Wextra -Werror -pedantic -I. as608_packet.c as608_transaction.c as608.c test_as608_get_random_code.c -o build/test_get_random_code
-          ./build/test_get_random_code
-          ${{ matrix.compiler }} -std=c11 -Wall -Wextra -Werror -pedantic -I. as608_packet.c as608_transaction.c as608.c test_as608_set_device_address.c -o build/test_set_device_address
-          ./build/test_set_device_address
-          ${{ matrix.compiler }} -std=c11 -Wall -Wextra -Werror -pedantic -I. as608_packet.c as608_transaction.c as608.c test_as608_write_notepad.c -o build/test_write_notepad
-          ./build/test_write_notepad
-          ${{ matrix.compiler }} -std=c11 -Wall -Wextra -Werror -pedantic -I. as608_packet.c as608_transaction.c as608.c test_as608_read_notepad.c -o build/test_read_notepad
-          ./build/test_read_notepad
-          ${{ matrix.compiler }} -std=c11 -Wall -Wextra -Werror -pedantic -I. as608_packet.c as608_transaction.c as608.c test_as608_write_user_gpio.c -o build/test_write_user_gpio
-          ./build/test_write_user_gpio
-          ${{ matrix.compiler }} -std=c11 -Wall -Wextra -Werror -pedantic -I. as608_packet.c as608_transaction.c as608.c test_as608_burn_code.c -o build/test_burn_code
-          ./build/test_burn_code
-          ${{ matrix.compiler }} -std=c11 -Wall -Wextra -Werror -pedantic -I. as608_packet.c as608_transaction.c as608.c test_as608_enroll_two_scan.c -o build/test_enroll_two_scan
-          ./build/test_enroll_two_scan
-          ${{ matrix.compiler }} -std=c11 -Wall -Wextra -Werror -pedantic -I. as608_packet.c as608_transaction.c as608.c test_as608_identify_range.c -o build/test_identify_range
-          ./build/test_identify_range
-          ${{ matrix.compiler }} -std=c11 -Wall -Wextra -Werror -pedantic -I. as608_packet.c as608_transaction.c as608.c test_as608_find_free_slot.c -o build/test_find_free_slot
-          ./build/test_find_free_slot
-          ${{ matrix.compiler }} -std=c11 -Wall -Wextra -Werror -pedantic -I. as608_packet.c as608_transaction.c as608.c test_as608_commands.c -o build/test_commands
-          ./build/test_commands
-          ${{ matrix.compiler }} -std=c11 -Wall -Wextra -Werror -pedantic -I. as608_packet.c as608_transaction.c as608.c test_as608_async.c -o build/test_async
-          ./build/test_async
-          ${{ matrix.compiler }} -std=c11 -Wall -Wextra -Werror -pedantic -I. as608_packet.c as608_transaction.c as608.c test_as608_async_faults.c -o build/test_async_faults
-          ./build/test_async_faults
+          cmake -S . -B build/core -DCMAKE_C_COMPILER=${{ matrix.compiler }} -DCMAKE_BUILD_TYPE=Release -DAS608_BUILD_TESTS=OFF
+          cmake --build build/core --parallel
