@@ -118,6 +118,8 @@ unless they provide a meaningful abstraction. Add wire-vector and error
 regressions for behavior changes. Update contracts and capabilities
 together. See [testing](TESTING.md).
 
-Actual ARM size, worst-case stack and service latency are unmeasured.
+The reference Cortex-M3 build measured 712 bytes per context and 7241
+bytes of allocated Flash sections (GCC 13.2.1, -Os); see [memory evidence](TESTING.md#arm-memory-reports).
+Worst-case stack and service latency remain unmeasured.
 Do not replace independent TX/RX storage or change enum ABI options
 without auditing lifetimes and measuring the target build.

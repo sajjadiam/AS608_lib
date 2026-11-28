@@ -7,4 +7,4 @@ set(CMAKE_C_COMPILER arm-none-eabi-gcc)
 set(CMAKE_AR arm-none-eabi-ar)
 set(CMAKE_RANLIB arm-none-eabi-ranlib)
 
-set(CMAKE_C_FLAGS_INIT "-mcpu=cortex-m3 -mthumb -mfloat-abi=soft -ffreestanding -ffunction-sections -fdata-sections -Wall -Wextra -Werror -pedantic")
+set(CMAKE_C_FLAGS_INIT "-mcpu=cortex-m3 -mthumb -mfloat-abi=soft -ffreestanding -ffunction-sections -fdata-sections -fstack-usage -fcallgraph-info=su -Wall -Wextra -Werror -pedantic")

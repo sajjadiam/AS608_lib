@@ -219,8 +219,8 @@ run does not establish target compatibility, timing or memory bounds.
 
 ## Remaining validation
 
-- [ ] Verify ARM Cortex-M3 cross-build evidence from the [ARM CI workflow](.github/workflows/arm-cortex-m3.yml).
-- [ ] Review Cortex-M3 measured section and ABI layout reports; see [ARM memory reports](docs/TESTING.md#arm-memory-reports).
+- [x] [ARM Cortex-M3 cross build, five header checks and full-core link](https://github.com/sajjadiam/AS608_lib/actions/runs/46123757921).
+- [x] Reference Cortex-M3 memory baseline measured and reviewed: see [ARM memory reports](docs/TESTING.md#arm-memory-reports).
 - [ ] Measure stack, final firmware memory fit and service latency.
 - [ ] STM32F103 UART IT/DMA adapter: owned TX queue, RX ring, error propagation and synchronization.
 - [ ] Non-blocking physical recovery and current-core target integration.

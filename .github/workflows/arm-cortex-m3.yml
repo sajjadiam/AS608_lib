@@ -29,6 +29,8 @@ jobs:
           cmake --build build/arm --parallel 2 --verbose
       - name: Measure ARM sections and ABI layouts
         run: python3 tools/report_arm_memory.py build/arm
+      - name: Analyze compiler stack usage and call graph
+        run: python3 tools/report_arm_stack.py build/arm
       - name: Verify ARM archive and full-core link
         run: bash tools/check_arm_build.sh build/arm
       - name: Upload cross-build evidence

@@ -104,6 +104,58 @@ and measured stack are required to establish fit.
 References: [GNU binutils](https://sourceware.org/binutils/docs/binutils.html),
 [STM32F103C8](https://www.st.com/en/microcontrollers-microprocessors/stm32f103c8.html).
 
+### Measured reference baseline
+
+[ARM CI 46123757921](https://github.com/sajjadiam/AS608_lib/actions/runs/46123757921)
+passed at commit b9fed6c using ARM GCC 13.2.1, Cortex-M3, Thumb, soft
+float, freestanding C11, -Os and no LTO.
+
+| Object | Code | Read-only data | Writable static RAM |
+| --- | ---: | ---: | ---: |
+| as608.c.obj | 5874 | 261 | 0 |
+| as608_packet.c.obj | 214 | 0 | 0 |
+| as608_transaction.c.obj | 892 | 0 | 0 |
+| Total | 6980 | 261 | 0 |
+
+Flash section sum: 7241 bytes. Context 712 bytes (alignment 4);
+transaction 608 (alignment 4), config 28, port 20, result 2.
+One/two contexts cost 712/1424 bytes respectively, excluding port,
+application and stack. Direct padding is 7 bytes in the command
+context and 8 in the embedded transaction. The reference ARM enum
+ABI reports size 1 for state, status and packet kind; do not assume
+these sizes for other toolchains or alter enum ABI independently.
+as608_process has a 2780-byte compiled symbol, including any inlined
+code. These results do not justify a layout or dispatcher rewrite
+without further evidence.
+
+## Stack usage and direct call graph
+
+The reference GCC toolchain now emits -fstack-usage and
+-fcallgraph-info=su sidecar files for each core object. Run:
+
+```sh
+python3 tools/report_arm_stack.py build/arm
+```
+
+The report preserves the original .su and .ci files, captures compiled
+frame sizes and qualifiers, detects recursive known direct-call paths,
+and sums frames along each public API's largest known direct path.
+Tail calls are conservatively counted as normal calls. Unbounded
+dynamic stack records fail the audit. Unknown callees, including
+indirect port/stream callbacks and C-runtime functions, are reported
+as boundaries, not assumed to cost zero in the total application
+budget. The generated stack-summary.json retains all frames, edges,
+public paths and unresolved callees.
+
+The largest known path is not a proven maximum stack bound: GCC's
+graph may omit backend-generated calls or other edges. The final
+budget must include application caller frames, runtime functions,
+callbacks, exception stacking, interrupt nesting and measured
+target high-water usage. Optimization, compiler version and ABI
+can change these numbers. No stack limit is imposed without an
+application requirement. See [GCC developer options](https://gcc.gnu.org/onlinedocs/gcc/Developer-Options.html)
+and [GCC instrumentation/options](https://gcc.gnu.org/onlinedocs/gcc/Instrumentation-Options.html).
+
 ## Engineering audit still required
 
 | Check | Acceptance evidence |

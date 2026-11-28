@@ -292,8 +292,11 @@ cmake --build build/analyzer --parallel 2
 ```
 
 These checks are not proof of absence of UB or target timing faults.
-ARM builds, RAM/stack measurement, platform adapters and current-core
-hardware tests remain outstanding. See [validation checklist](FEATURES.md#remaining-validation).
+The reference ARM build and memory baseline have passed: 7241 bytes
+of allocated Flash sections, no writable static core sections and 712
+bytes per context (GCC 13.2.1, Cortex-M3, -Os). See the target audit
+for scope and evidence. Final firmware memory fit, stack, platform
+adapters and current-core hardware tests remain outstanding. See [validation checklist](FEATURES.md#remaining-validation).
 
 ## Migration from the former driver
 
