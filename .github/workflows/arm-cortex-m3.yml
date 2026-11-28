@@ -27,6 +27,8 @@ jobs:
         run: |
           cmake -S . -B build/arm -DCMAKE_TOOLCHAIN_FILE=cmake/toolchains/arm-cortex-m3-gcc.cmake -DCMAKE_BUILD_TYPE=MinSizeRel -DCMAKE_EXPORT_COMPILE_COMMANDS=ON -DAS608_BUILD_TESTS=OFF
           cmake --build build/arm --parallel 2 --verbose
+      - name: Measure ARM sections and ABI layouts
+        run: python3 tools/report_arm_memory.py build/arm
       - name: Verify ARM archive and full-core link
         run: bash tools/check_arm_build.sh build/arm
       - name: Upload cross-build evidence

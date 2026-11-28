@@ -20,8 +20,8 @@ test "$(arm-none-eabi-gcc -dumpmachine)" = arm-none-eabi
 
 arm-none-eabi-ar t "$archive" | tee "$report/archive-members.txt"
 test "$(wc -l < "$report/archive-members.txt")" -eq 3
-for member in as608.c.o as608_packet.c.o as608_transaction.c.o; do
-    grep -Fxq "$member" "$report/archive-members.txt"
+for member in as608 as608_packet as608_transaction; do
+    test "$(grep -Ec "^${member}\.c\.(o|obj)$" "$report/archive-members.txt")" -eq 1
 done
 
 arm-none-eabi-readelf -h -A "$archive" | tee "$report/archive-elf.txt"

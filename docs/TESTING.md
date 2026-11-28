@@ -76,6 +76,34 @@ References: [GCC ARM options](https://gcc.gnu.org/onlinedocs/gcc/ARM-Options.htm
 [CMake toolchains](https://cmake.org/cmake/help/latest/manual/cmake-toolchains.7.html),
 [CMAKE_TRY_COMPILE_TARGET_TYPE](https://cmake.org/cmake/help/latest/variable/CMAKE_TRY_COMPILE_TARGET_TYPE.html).
 
+## ARM memory reports
+
+Run `python3 tools/report_arm_memory.py build/arm` after the reference
+cross build. The separate compile-only probe uses Cortex-M3 reference ABI
+flags and encodes sizeof, _Alignof and offsetof in symbol sizes; it is
+never included in the production archive or link-check ELF.
+
+The audit artifact includes memory-summary.json (per-member allocated
+section totals and field layout/padding), raw objdump section headers,
+nm symbol sizes, and size -A output. Flash section sum includes code,
+read-only allocated data and initialized writable data; static RAM
+section sum includes writable allocated data and zero-initialized data.
+The reference build uses -Os, no LTO, and the standard compiler ABI.
+Archive sums exclude C-runtime code, final link padding, dead-section
+elimination, startup, port resources, application buffers and stack.
+Function symbols report out-of-line compiled bodies, not inclusive
+call-graph cost or cycle counts. Context costs are separate from global
+static sections: one caller-owned context costs sizeof(as608_t), two
+cost twice that size; configuration is embedded.
+
+Use the measured JSON for the exact toolchain revision before proposing
+layout or code optimizations. STM32F103C8 nominal capacity is 64 KiB
+Flash and 20 KiB SRAM (ST product page); the final application link map
+and measured stack are required to establish fit.
+
+References: [GNU binutils](https://sourceware.org/binutils/docs/binutils.html),
+[STM32F103C8](https://www.st.com/en/microcontrollers-microprocessors/stm32f103c8.html).
+
 ## Engineering audit still required
 
 | Check | Acceptance evidence |
