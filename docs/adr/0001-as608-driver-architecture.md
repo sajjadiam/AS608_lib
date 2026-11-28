@@ -57,6 +57,13 @@ Reference: AS60x fingerprint SOC user manual V1.0, packet and command
 format sections. Reference hardware configuration: 57600 baud, 8N2 on the
 tested modules. See prior Git revisions for the original detailed ADR.
 
+## Detailed engineering documents
+
+See [architecture](../ARCHITECTURE.md), [protocol](../PROTOCOL.md),
+[porting](../PORTING.md), [recovery](../ERROR_HANDLING.md) and
+[testing](../TESTING.md). These elaborate the accepted decision without
+introducing a second engine or changing the public contract.
+
 ## Remaining validation
 
 STM32 UART IT/DMA adapter, physical recovery, complete target enrollment

@@ -40,6 +40,8 @@ jobs:
           -DCMAKE_BUILD_TYPE=${{ matrix.config }}
           -DAS608_BUILD_TESTS=ON
           -DAS608_ENABLE_SANITIZERS=${{ matrix.sanitizers }}
+      - name: Syntax-check README C example
+        run: python3 tests/check_readme_example.py --compiler ${{ matrix.compiler }}
       - name: Verify CTest inventory
         run: python3 tests/check_inventory.py build/host
       - name: Build core, tests and header contracts

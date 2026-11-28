@@ -236,8 +236,14 @@ docs/adr/        Architecture decisions
 CMakeLists.txt   Static library and host build
 ```
 
-See [ADR-0001](docs/adr/0001-as608-driver-architecture.md) for layer
-ownership and design rationale.
+See [ADR-0001](docs/adr/0001-as608-driver-architecture.md) for design rationale.
+Engineering documentation:
+
+- [Architecture and state machines](docs/ARCHITECTURE.md)
+- [Wire protocol and profiles](docs/PROTOCOL.md)
+- [Platform porting and UART design](docs/PORTING.md)
+- [Error handling and recovery](docs/ERROR_HANDLING.md)
+- [Testing and target validation](docs/TESTING.md)
 
 ## Validation
 
@@ -246,7 +252,8 @@ GCC Debug/Release, Clang Debug/Release and Clang ASan+UBSan. Nine
 independent compile-only header checks run in each configuration,
 including freestanding C11 and C++11 contracts. A separate GCC analyzer
 job checks the three production translation units. Assertions stay
-enabled in Release tests. Standalone C-only archive builds are verified
+enabled in Release tests. CI syntax-checks the actual README C fragment.
+Standalone C-only archive builds are verified
 with both compilers. Reports are retained as workflow artifacts.
 
 ```sh

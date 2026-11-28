@@ -264,4 +264,5 @@ a matching firmware contract and a demonstrated use case.
    [command implementation](src/as608.c), [transport](src/as608_transaction.c),
    [architecture decision](docs/adr/0001-as608-driver-architecture.md).
 
+See [engineering validation plan](docs/TESTING.md) and [porting contract](docs/PORTING.md).
 The development history and former checklists are retained in Git.
