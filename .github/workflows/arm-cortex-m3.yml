@@ -37,6 +37,33 @@ jobs:
         run: bash tools/check_arm_build.sh build/arm
       - name: Compare baseline and candidate optimization levels
         run: python3 tools/compare_arm_optimization.py build/arm/audit/optimization
+      - name: Compile reference STM32F103 test port with pinned ST SDK
+        run: |
+          set -euo pipefail
+          sdk="$RUNNER_TEMP/stm32cubef1"
+          git clone --depth 1 --branch v1.8.6 https://github.com/STMicroelectronics/STM32CubeF1.git "$sdk"
+          test "$(git -C "$sdk" rev-parse HEAD)" = 42472d601caa457b02d849c7de5f9792629ee324
+          git -C "$sdk" submodule update --init --depth 1 Drivers/CMSIS/Device/ST/STM32F1xx Drivers/STM32F1xx_HAL_Driver
+          test "$(git -C "$sdk/Drivers/CMSIS/Device/ST/STM32F1xx" rev-parse HEAD)" = 8a76309ed1250d817e9c888c4417171d2ba3ba63
+          test "$(git -C "$sdk/Drivers/STM32F1xx_HAL_Driver" rev-parse HEAD)" = 77fbb30b7a1d02533980400083e48c559aae5a4f
+          report=build/arm/audit/stm32f103-port
+          mkdir -p "$report"
+          cp "$sdk/Drivers/STM32F1xx_HAL_Driver/Inc/stm32f1xx_hal_conf_template.h" "$report/stm32f1xx_hal_conf.h"
+          git -C "$sdk" rev-parse HEAD > "$report/sdk-revision.txt"
+          git -C "$sdk" submodule status Drivers/CMSIS/Device/ST/STM32F1xx Drivers/STM32F1xx_HAL_Driver >> "$report/sdk-revision.txt"
+          arm-none-eabi-gcc -mcpu=cortex-m3 -mthumb -mfloat-abi=soft -std=c11 -Os \
+            -ffreestanding -ffunction-sections -fdata-sections -fstack-usage \
+            -Wall -Wextra -Werror -pedantic -DSTM32F103xB -DUSE_HAL_DRIVER \
+            -Isrc -I"$report" \
+            -isystem "$sdk/Drivers/CMSIS/Include" \
+            -isystem "$sdk/Drivers/CMSIS/Device/ST/STM32F1xx/Include" \
+            -isystem "$sdk/Drivers/STM32F1xx_HAL_Driver/Inc" \
+            -c examples/stm32f103/as608_port_stm32f103.c -o "$report/port.o"
+          arm-none-eabi-size -A "$report/port.o" | tee "$report/sections.txt"
+          arm-none-eabi-nm -u "$report/port.o" | tee "$report/undefined.txt"
+          arm-none-eabi-nm -g --defined-only "$report/port.o" | tee "$report/symbols.txt"
+          arm-none-eabi-objdump -dr "$report/port.o" > "$report/disassembly.txt"
+          echo "PASS: reference test port compiled against pinned STM32CubeF1 SDK (object only)."
       - name: Upload cross-build evidence
         if: always()
         uses: actions/upload-artifact@v4

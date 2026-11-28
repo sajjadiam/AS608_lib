@@ -2,8 +2,9 @@
 
 [Port contract](../src/as608_port.h) · [Recovery](ERROR_HANDLING.md)
 
-The core is ISO C11 and platform-independent. This is an adapter design
-contract, not a supplied STM32 HAL/LL implementation. The historical
+The core is ISO C11 and platform-independent. The generic port contract
+is independent of the optional, single-instance STM32F103 test adapter
+provided under `examples/stm32f103/`. The historical
 STM32F103C8T6 configuration was USART1/USART2, 57600 baud, 8N2; verify
 the actual module's voltage levels, pinout, supply, baud and framing
 against its board documentation before connecting hardware. Processor
@@ -104,6 +105,71 @@ the port while idle. See ERROR_HANDLING.md for recovery sequencing.
 - Verify download ACK profile before download or composite write.
 - Demonstrate separate contexts and independent USART sessions under load.
 
-No target port, queue-size recommendation or timing guarantee is
-certified by these documents. Provide and validate those in the
-application/toolchain environment.
+## STM32F103 Blue Pill reference test port
+
+[`as608_port_stm32f103.c`](../examples/stm32f103/as608_port_stm32f103.c)
+is a deliberately single-instance LL/CMSIS adapter for hardware validation,
+not a production UART framework. It is not part of the core CMake target.
+The application owns GPIO, RCC, baud/framing, NVIC and physical recovery.
+It uses `HAL_GetTick()` only for the timebase and does not use HAL UART I/O.
+The default USART is USART1; change `AS608_TEST_UART` at compile time if
+needed and route the matching IRQ. The private RX/TX rings have 511/127
+usable bytes respectively. At 57600 8N2, a previously empty RX ring
+provides approximately 97.6 ms of ideal buffering, not an ISR latency
+allowance. UART hardware still requires timely service of each character.
+
+Copy the C file into an STM32CubeIDE application and add the core src
+directory to include paths. Configure asynchronous full-duplex 8-bit
+no-parity USART (stop bits and baud verified against the sensor), no
+DMA, no hardware flow control. HAL initialization may configure the
+peripheral, but do not use HAL UART I/O or HAL_UART_IRQHandler on it.
+The application must establish a fresh physical link and ensure the
+peripheral interrupt sources and NVIC IRQ are disabled before init.
+Declare the four functions in the application's existing header:
+
+```c
+bool as608_test_port_init(as608_port_t *port);
+void as608_test_port_stop(void);
+uint32_t as608_test_port_get_errors(void);
+void as608_test_port_irq_handler(void);
+```
+
+For example, after UART configuration and sensor recovery (USART1):
+
+```c
+static as608_t sensor;
+as608_config_t config = {
+    .device_address = UINT32_C(0xFFFFFFFF),
+    .timeout_ms = 5000U
+};
+
+if (!as608_test_port_init(&config.port)) {
+    Error_Handler();
+}
+if (as608_init(&sensor, &config) != AS608_STATUS_OK) {
+    as608_test_port_stop();
+    Error_Handler();
+}
+NVIC_ClearPendingIRQ(USART1_IRQn);
+NVIC_EnableIRQ(USART1_IRQn);
+```
+
+In the application's existing IRQ handler, call
+`as608_test_port_irq_handler()` instead of HAL UART dispatch. Start
+a non-destructive command and poll the core from one serialized
+thread; do not call core APIs or port init/stop from the ISR.
+
+For recovery: logically abort an active core job if necessary, stop
+the port, disable its NVIC IRQ, reset/reconfigure the USART, recover
+the sensor according to its documentation and establish a fresh link.
+Only then reinitialize the port, confirm core recovery where required,
+and re-enable NVIC. A port stop alone does not stop the hardware
+shifter or establish a new sensor epoch. Error bits are raw USART SR
+PE/FE/NE/ORE plus bit 16 for software RX overflow.
+
+The ARM workflow compiles this adapter as a separate object using
+STM32CubeF1 v1.8.6 with pinned CMSIS/device and HAL driver revisions.
+This verifies compilation with actual vendor headers, not a bootable
+firmware link, execution timing, electrical compatibility, or hardware
+behavior. No target port or timing guarantee is certified by this
+document; validate on the actual application and sensor.
